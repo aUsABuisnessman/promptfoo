@@ -9,6 +9,7 @@ import RedteamIterativeProvider from '../redteam/providers/iterative';
 import RedteamImageIterativeProvider from '../redteam/providers/iterativeImage';
 import RedteamIterativeTreeProvider from '../redteam/providers/iterativeTree';
 import RedteamPandamoniumProvider from '../redteam/providers/pandamonium';
+import { ServerToolDiscoveryMultiProvider } from '../redteam/providers/toolDiscoveryMulti';
 import type { LoadApiProviderContext } from '../types';
 import type { ApiProvider, ProviderOptions } from '../types/providers';
 import { isJavascriptFile } from '../util/file';
@@ -25,6 +26,7 @@ import { AzureModerationProvider } from './azure/moderation';
 import { BAMProvider } from './bam';
 import { AwsBedrockCompletionProvider, AwsBedrockEmbeddingProvider } from './bedrock';
 import { BrowserProvider } from './browser';
+import { createCerebrasProvider } from './cerebras';
 import { ClouderaAiChatCompletionProvider } from './cloudera';
 import * as CloudflareAiProviders from './cloudflare-ai';
 import { CohereChatCompletionProvider, CohereEmbeddingProvider } from './cohere';
@@ -33,7 +35,7 @@ import { EchoProvider } from './echo';
 import { FalImageGenerationProvider } from './fal';
 import { GolangProvider } from './golangCompletion';
 import { AIStudioChatProvider } from './google/ai.studio';
-import { GoogleMMLiveProvider } from './google/live';
+import { GoogleLiveProvider } from './google/live';
 import { VertexChatProvider, VertexEmbeddingProvider } from './google/vertex';
 import { GroqProvider } from './groq';
 import { HttpProvider } from './http';
@@ -45,6 +47,7 @@ import {
   HuggingfaceTokenExtractionProvider,
 } from './huggingface';
 import { JfrogMlChatCompletionProvider } from './jfrog';
+import { createLambdaLabsProvider } from './lambdalabs';
 import { LiteLLMProvider } from './litellm';
 import { LlamaProvider } from './llama';
 import {
@@ -72,6 +75,7 @@ import {
   ReplicateProvider,
   ReplicateImageProvider,
 } from './replicate';
+import { createScriptBasedProviderFactory } from './scriptBasedProvider';
 import { ScriptCompletionProvider } from './scriptCompletion';
 import { SequenceProvider } from './sequence';
 import { SimulatedUser } from './simulatedUser';
@@ -92,6 +96,9 @@ interface ProviderFactory {
 }
 
 export const providerMap: ProviderFactory[] = [
+  createScriptBasedProviderFactory('exec', null, ScriptCompletionProvider),
+  createScriptBasedProviderFactory('golang', 'go', GolangProvider),
+  createScriptBasedProviderFactory('python', 'py', PythonProvider),
   {
     test: (providerPath: string) => providerPath.startsWith('adaline:'),
     create: async (
@@ -265,6 +272,10 @@ export const providerMap: ProviderFactory[] = [
       if (modelType === 'embeddings' || modelType === 'embedding') {
         return new AwsBedrockEmbeddingProvider(modelName, providerOptions);
       }
+      if (modelType === 'kb' || modelType === 'knowledge-base') {
+        const { AwsBedrockKnowledgeBaseProvider } = await import('./bedrockKnowledgeBase');
+        return new AwsBedrockKnowledgeBaseProvider(modelName, providerOptions);
+      }
       return new AwsBedrockCompletionProvider(
         `${modelType}${modelName ? `:${modelName}` : ''}`,
         providerOptions,
@@ -314,6 +325,19 @@ export const providerMap: ProviderFactory[] = [
           ...providerOptions.config,
           modelType,
         },
+      });
+    },
+  },
+  {
+    test: (providerPath: string) => providerPath.startsWith('cerebras:'),
+    create: async (
+      providerPath: string,
+      providerOptions: ProviderOptions,
+      context: LoadApiProviderContext,
+    ) => {
+      return createCerebrasProvider(providerPath, {
+        config: providerOptions,
+        env: context.env,
       });
     },
   },
@@ -435,18 +459,6 @@ export const providerMap: ProviderFactory[] = [
     },
   },
   {
-    test: (providerPath: string) => providerPath.startsWith('exec:'),
-    create: async (
-      providerPath: string,
-      providerOptions: ProviderOptions,
-      context: LoadApiProviderContext,
-    ) => {
-      // Load script module
-      const scriptPath = providerPath.split(':')[1];
-      return new ScriptCompletionProvider(scriptPath, providerOptions);
-    },
-  },
-  {
     test: (providerPath: string) => providerPath.startsWith('f5:'),
     create: async (
       providerPath: string,
@@ -520,22 +532,6 @@ export const providerMap: ProviderFactory[] = [
           apiKeyEnvar: 'GITHUB_TOKEN',
         },
       });
-    },
-  },
-  {
-    test: (providerPath: string) =>
-      providerPath.startsWith('golang:') ||
-      (providerPath.startsWith('file://') &&
-        (providerPath.endsWith('.go') || providerPath.includes('.go:'))),
-    create: async (
-      providerPath: string,
-      providerOptions: ProviderOptions,
-      context: LoadApiProviderContext,
-    ) => {
-      const scriptPath = providerPath.startsWith('file://')
-        ? providerPath.slice('file://'.length)
-        : providerPath.split(':').slice(1).join(':');
-      return new GolangProvider(scriptPath, providerOptions);
     },
   },
   {
@@ -900,8 +896,8 @@ export const providerMap: ProviderFactory[] = [
         const modelName = splits.slice(2).join(':');
 
         if (serviceType === 'live') {
-          // This is a Multimodal Live API request
-          return new GoogleMMLiveProvider(modelName, providerOptions);
+          // This is a Live API request
+          return new GoogleLiveProvider(modelName, providerOptions);
         }
       }
 
@@ -1132,19 +1128,26 @@ export const providerMap: ProviderFactory[] = [
     },
   },
   {
-    test: (providerPath: string) =>
-      providerPath.startsWith('python:') ||
-      (providerPath.startsWith('file://') &&
-        (providerPath.endsWith('.py') || providerPath.includes('.py:'))),
+    test: (providerPath: string) => providerPath === 'promptfoo:redteam:tool-discovery:multi-turn',
     create: async (
       providerPath: string,
       providerOptions: ProviderOptions,
       context: LoadApiProviderContext,
     ) => {
-      const scriptPath = providerPath.startsWith('file://')
-        ? providerPath.slice('file://'.length)
-        : providerPath.split(':').slice(1).join(':');
-      return new PythonProvider(scriptPath, providerOptions);
+      return new ServerToolDiscoveryMultiProvider(providerOptions.config);
+    },
+  },
+  {
+    test: (providerPath: string) => providerPath.startsWith('lambdalabs:'),
+    create: async (
+      providerPath: string,
+      providerOptions: ProviderOptions,
+      context: LoadApiProviderContext,
+    ) => {
+      return createLambdaLabsProvider(providerPath, {
+        config: providerOptions,
+        env: context.env,
+      });
     },
   },
 ];

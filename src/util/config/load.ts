@@ -439,9 +439,14 @@ export async function combineConfigs(configPaths: string[]): Promise<UnifiedConf
   return combinedConfig;
 }
 
+/**
+ * @param type - The type of configuration file. Incrementally implemented; currently supports `DatasetGeneration`.
+ *  TODO(Optimization): Perform type-specific validation e.g. using Zod schemas for data model variants.
+ */
 export async function resolveConfigs(
   cmdObj: Partial<CommandLineOptions>,
   _defaultConfig: Partial<UnifiedConfig>,
+  type?: 'DatasetGeneration',
 ): Promise<{ testSuite: TestSuite; config: Partial<UnifiedConfig>; basePath: string }> {
   let fileConfig: Partial<UnifiedConfig> = {};
   let defaultConfig = _defaultConfig;
@@ -453,7 +458,7 @@ export async function resolveConfigs(
   }
   // Standalone assertion mode
   if (cmdObj.assertions) {
-    telemetry.recordAndSendOnce('feature_used', {
+    telemetry.record('feature_used', {
       feature: 'standalone assertions mode',
     });
     if (!cmdObj.modelOutputs) {
@@ -521,11 +526,11 @@ export async function resolveConfigs(
       ${chalk.yellow.bold('⚠️  No promptfooconfig found')}
 
       ${chalk.white('Try running with:')}
-  
+
       ${chalk.cyan(`${runCommand} eval -c ${chalk.bold('path/to/promptfooconfig.yaml')}`)}
-  
+
       ${chalk.white('Or create a config with:')}
-  
+
       ${chalk.green(`${runCommand} init`)}
     `);
     process.exit(1);
@@ -536,7 +541,11 @@ export async function resolveConfigs(
     process.exit(1);
   }
 
-  if (!hasProviders) {
+  if (
+    // Dataset configs don't require providers
+    type !== 'DatasetGeneration' &&
+    !hasProviders
+  ) {
     logger.error('You must specify at least 1 provider (for example, openai:gpt-4o)');
     process.exit(1);
   }

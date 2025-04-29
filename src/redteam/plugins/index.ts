@@ -25,6 +25,7 @@ import { CrossSessionLeakPlugin } from './crossSessionLeak';
 import { CyberSecEvalPlugin } from './cyberseceval';
 import { DebugAccessPlugin } from './debugAccess';
 import { DivergentRepetitionPlugin } from './divergentRepetition';
+import { DoNotAnswerPlugin } from './donotanswer';
 import { ExcessiveAgencyPlugin } from './excessiveAgency';
 import { HallucinationPlugin } from './hallucination';
 import { HarmbenchPlugin } from './harmbench';
@@ -43,7 +44,9 @@ import { RbacPlugin } from './rbac';
 import { ShellInjectionPlugin } from './shellInjection';
 import { SqlInjectionPlugin } from './sqlInjection';
 import { ToolDiscoveryPlugin } from './toolDiscovery';
+import { ToolDiscoveryMultiTurnPlugin } from './toolDiscoveryMultiTurn';
 import { UnsafeBenchPlugin } from './unsafebench';
+import { XSTestPlugin } from './xstest';
 
 export interface PluginFactory {
   key: string;
@@ -109,18 +112,18 @@ function createPluginFactory<T extends PluginConfig>(
     key,
     validate: validate as ((config: PluginConfig) => void) | undefined,
     action: async ({ provider, purpose, injectVar, n, delayMs, config }: PluginActionParams) => {
-      if (shouldGenerateRemote()) {
-        const testCases = await fetchRemoteTestCases(key, purpose, injectVar, n, config);
-        return testCases.map((testCase) => ({
-          ...testCase,
-          metadata: {
-            ...testCase.metadata,
-            pluginId: getShortPluginId(key),
-          },
-        }));
+      if ((PluginClass as any).canGenerateRemote === false || !shouldGenerateRemote()) {
+        logger.debug(`Using local redteam generation for ${key}`);
+        return new PluginClass(provider, purpose, injectVar, config as T).generateTests(n, delayMs);
       }
-      logger.debug(`Using local redteam generation for ${key}`);
-      return new PluginClass(provider, purpose, injectVar, config as T).generateTests(n, delayMs);
+      const testCases = await fetchRemoteTestCases(key, purpose, injectVar, n, config);
+      return testCases.map((testCase) => ({
+        ...testCase,
+        metadata: {
+          ...testCase.metadata,
+          pluginId: getShortPluginId(key),
+        },
+      }));
     },
   };
 }
@@ -158,9 +161,13 @@ const pluginFactories: PluginFactory[] = [
   createPluginFactory(CyberSecEvalPlugin, 'cyberseceval'),
   createPluginFactory(DebugAccessPlugin, 'debug-access'),
   createPluginFactory(DivergentRepetitionPlugin, 'divergent-repetition'),
+  createPluginFactory(DoNotAnswerPlugin, 'donotanswer'),
   createPluginFactory(ExcessiveAgencyPlugin, 'excessive-agency'),
-  createPluginFactory(HallucinationPlugin, 'hallucination'),
+  createPluginFactory(XSTestPlugin, 'xstest'),
+  createPluginFactory(ToolDiscoveryPlugin, 'tool-discovery'),
+  createPluginFactory(ToolDiscoveryMultiTurnPlugin, 'tool-discovery:multi-turn'),
   createPluginFactory(HarmbenchPlugin, 'harmbench'),
+  createPluginFactory(HallucinationPlugin, 'hallucination'),
   createPluginFactory(ImitationPlugin, 'imitation'),
   createPluginFactory<{ intent: string }>(IntentPlugin, 'intent', (config: { intent: string }) =>
     invariant(config.intent, 'Intent plugin requires `config.intent` to be set'),
@@ -171,19 +178,10 @@ const pluginFactories: PluginFactory[] = [
     invariant(config.policy, 'Policy plugin requires `config.policy` to be set'),
   ),
   createPluginFactory(PoliticsPlugin, 'politics'),
-  createPluginFactory<{ systemPrompt: string }>(
-    PromptExtractionPlugin,
-    'prompt-extraction',
-    (config: { systemPrompt: string }) =>
-      invariant(
-        config.systemPrompt,
-        'Prompt extraction plugin requires `config.systemPrompt` to be set',
-      ),
-  ),
+  createPluginFactory<{ systemPrompt?: string }>(PromptExtractionPlugin, 'prompt-extraction'),
   createPluginFactory(RbacPlugin, 'rbac'),
   createPluginFactory(ShellInjectionPlugin, 'shell-injection'),
   createPluginFactory(SqlInjectionPlugin, 'sql-injection'),
-  createPluginFactory(ToolDiscoveryPlugin, 'tool-discovery'),
   createPluginFactory(UnsafeBenchPlugin, 'unsafebench'),
   ...unalignedHarmCategories.map((category) => ({
     key: category,
@@ -268,6 +266,7 @@ const remotePlugins: PluginFactory[] = [
   'ascii-smuggling',
   'bfla',
   'bola',
+  'cca',
   'competitors',
   'harmful:misinformation-disinformation',
   'harmful:specialized-advice',

@@ -41,8 +41,7 @@ import EvalOutputPromptDialog from './EvalOutputPromptDialog';
 import MarkdownErrorBoundary from './MarkdownErrorBoundary';
 import type { TruncatedTextProps } from './TruncatedText';
 import TruncatedText from './TruncatedText';
-import { useStore as useMainStore } from './store';
-import { useStore as useResultsViewStore } from './store';
+import { useStore as useMainStore, useResultsViewSettingsStore } from './store';
 import './ResultsTable.css';
 
 function formatRowOutput(output: EvaluateTableOutput | string) {
@@ -90,11 +89,13 @@ function TableHeader({
               🔎
             </span>
           </Tooltip>
-          <EvalOutputPromptDialog
-            open={promptOpen}
-            onClose={handlePromptClose}
-            prompt={expandedText}
-          />
+          {promptOpen && (
+            <EvalOutputPromptDialog
+              open={promptOpen}
+              onClose={handlePromptClose}
+              prompt={expandedText}
+            />
+          )}
           {resourceId && (
             <Tooltip title="View other evals and datasets for this prompt">
               <span className="action">
@@ -135,7 +136,7 @@ interface ExtendedEvaluateTableRow extends EvaluateTableRow {
 
 function useScrollHandler() {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const { stickyHeader } = useResultsViewStore();
+  const { stickyHeader } = useResultsViewSettingsStore();
   const lastScrollY = useRef(0);
 
   useEffect(() => {
@@ -202,7 +203,8 @@ function ResultsTable({
   onSearchTextChange,
   setFilterMode,
 }: ResultsTableProps) {
-  const { evalId, table, setTable, config, inComparisonMode, version } = useMainStore();
+  const { evalId, table, setTable, config, version } = useMainStore();
+  const { inComparisonMode } = useResultsViewSettingsStore();
   const { showToast } = useToast();
 
   invariant(table, 'Table should be defined');
@@ -403,6 +405,9 @@ function ResultsTable({
   ]);
 
   const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 50 });
+  const parseQueryParams = (queryString: string) => {
+    return Object.fromEntries(new URLSearchParams(queryString));
+  };
 
   React.useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -450,7 +455,7 @@ function ResultsTable({
 
   const columnHelper = React.useMemo(() => createColumnHelper<EvaluateTableRow>(), []);
 
-  const { renderMarkdown } = useResultsViewStore();
+  const { renderMarkdown } = useResultsViewSettingsStore();
   const variableColumns = React.useMemo(() => {
     if (head.vars.length > 0) {
       return [
@@ -615,7 +620,24 @@ function ResultsTable({
               const providerConfig = Array.isArray(config?.providers)
                 ? config.providers[idx]
                 : undefined;
-              const providerParts = prompt.provider ? prompt.provider.split(':') : [];
+
+              let providerParts: string[] = [];
+              try {
+                if (prompt.provider && typeof prompt.provider === 'string') {
+                  providerParts = prompt.provider.split(':');
+                } else if (prompt.provider) {
+                  const providerObj = prompt.provider as any; // Use any for flexible typing
+                  const providerId =
+                    typeof providerObj === 'object' && providerObj !== null
+                      ? providerObj.id || JSON.stringify(providerObj)
+                      : String(providerObj);
+                  providerParts = [providerId];
+                }
+              } catch (error) {
+                console.error('Error parsing provider:', error);
+                providerParts = ['Error parsing provider'];
+              }
+
               const providerDisplay = (
                 <Tooltip title={providerConfig ? <pre>{yaml.dump(providerConfig)}</pre> : ''}>
                   {providerParts.length > 1 ? (
@@ -623,7 +645,7 @@ function ResultsTable({
                       {providerParts[0]}:<strong>{providerParts.slice(1).join(':')}</strong>
                     </>
                   ) : (
-                    <strong>{prompt.provider}</strong>
+                    <strong>{providerParts[0] || 'Unknown provider'}</strong>
                   )}
                 </Tooltip>
               );
@@ -778,7 +800,90 @@ function ResultsTable({
   });
 
   const { isCollapsed } = useScrollHandler();
-  const { stickyHeader, setStickyHeader } = useResultsViewStore();
+  const { stickyHeader, setStickyHeader } = useResultsViewSettingsStore();
+
+  const clearRowIdFromUrl = React.useCallback(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('rowId')) {
+      url.searchParams.delete('rowId');
+      window.history.replaceState({}, '', url);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = parseQueryParams(window.location.search);
+    const rowId = params['rowId'];
+
+    if (rowId) {
+      const parsedRowId = Number(rowId);
+      const rowIndex = Math.max(0, Math.min(parsedRowId - 1, filteredBody.length - 1));
+
+      let hasScrolled = false;
+
+      const rowPageIndex = Math.floor(rowIndex / pagination.pageSize);
+
+      const maxPageIndex = reactTable.getPageCount() - 1;
+      const safeRowPageIndex = Math.min(rowPageIndex, maxPageIndex);
+
+      if (pagination.pageIndex !== safeRowPageIndex) {
+        setPagination((prev) => ({ ...prev, pageIndex: safeRowPageIndex }));
+      }
+
+      const scrollToRow = () => {
+        if (hasScrolled) {
+          return;
+        }
+
+        const localRowIndex = rowIndex % pagination.pageSize;
+        const rowElement = document.querySelector(`#row-${localRowIndex}`);
+
+        if (rowElement) {
+          hasScrolled = true;
+
+          requestAnimationFrame(() => {
+            rowElement.scrollIntoView({
+              behavior: 'smooth',
+              block: 'nearest',
+            });
+          });
+        }
+      };
+
+      const tableContainer =
+        document.querySelector('.results-table')?.parentElement || document.body;
+
+      const observer = new MutationObserver(() => {
+        if (hasScrolled) {
+          observer.disconnect();
+          return;
+        }
+
+        const localRowIndex = rowIndex % pagination.pageSize;
+        const rowElement = document.querySelector(`#row-${localRowIndex}`);
+        if (rowElement) {
+          scrollToRow();
+          observer.disconnect();
+        }
+      });
+
+      observer.observe(tableContainer, {
+        childList: true,
+        subtree: true,
+      });
+
+      const timeoutId = setTimeout(() => {
+        if (!hasScrolled) {
+          console.warn('Timeout reached while waiting for row to be rendered');
+          observer.disconnect();
+        }
+      }, 5000);
+
+      return () => {
+        observer.disconnect();
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [pagination.pageIndex, pagination.pageSize, reactTable, filteredBody.length]);
 
   return (
     <div>
@@ -846,8 +951,9 @@ function ResultsTable({
         <tbody>
           {reactTable.getRowModel().rows.map((row, rowIndex) => {
             let colBorderDrawn = false;
+
             return (
-              <tr key={row.id}>
+              <tr key={row.id} id={`row-${row.index % pagination.pageSize}`}>
                 {row.getVisibleCells().map((cell) => {
                   const isMetadataCol =
                     cell.column.id.startsWith('Variable') || cell.column.id === 'description';
@@ -919,7 +1025,8 @@ function ResultsTable({
         <Box className="pagination" mx={1} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Button
             onClick={() => {
-              setPagination((old) => ({ ...old, pageIndex: Math.max(old.pageIndex - 1, 0) }));
+              setPagination((prev) => ({ ...prev, pageIndex: Math.max(prev.pageIndex - 1, 0) }));
+              clearRowIdFromUrl();
               window.scrollTo(0, 0);
             }}
             disabled={reactTable.getState().pagination.pageIndex === 0}
@@ -935,10 +1042,11 @@ function ResultsTable({
               value={reactTable.getState().pagination.pageIndex + 1}
               onChange={(e) => {
                 const page = e.target.value ? Number(e.target.value) - 1 : 0;
-                setPagination((old) => ({
-                  ...old,
+                setPagination((prev) => ({
+                  ...prev,
                   pageIndex: Math.min(Math.max(page, 0), reactTable.getPageCount() - 1),
                 }));
+                clearRowIdFromUrl();
               }}
               InputProps={{
                 style: { width: '60px', textAlign: 'center' },
@@ -949,10 +1057,11 @@ function ResultsTable({
           </Typography>
           <Button
             onClick={() => {
-              setPagination((old) => ({
-                ...old,
-                pageIndex: Math.min(old.pageIndex + 1, reactTable.getPageCount() - 1),
+              setPagination((prev) => ({
+                ...prev,
+                pageIndex: Math.min(prev.pageIndex + 1, reactTable.getPageCount() - 1),
               }));
+              clearRowIdFromUrl();
               window.scrollTo(0, 0);
             }}
             disabled={reactTable.getState().pagination.pageIndex + 1 >= reactTable.getPageCount()}

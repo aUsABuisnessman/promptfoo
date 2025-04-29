@@ -123,7 +123,7 @@ export async function renderPrompt(
           yaml.load(fs.readFileSync(filePath, 'utf8')) as string | object,
         );
       } else if (fileExtension === 'pdf' && !getEnvBool('PROMPTFOO_DISABLE_PDF_AS_TEXT')) {
-        telemetry.recordOnce('feature_used', {
+        telemetry.record('feature_used', {
           feature: 'extract_text_from_pdf',
         });
         vars[varName] = await extractTextFromPDF(filePath);
@@ -137,7 +137,7 @@ export async function renderPrompt(
             ? 'video'
             : 'audio';
 
-        telemetry.recordOnce('feature_used', {
+        telemetry.record('feature_used', {
           feature: `load_${fileType}_as_base64`,
         });
 
@@ -257,13 +257,13 @@ export async function renderPrompt(
 
 /**
  * Runs extension hooks for the given hook name and context.
- * @param extensions - An array of extension paths.
+ * @param extensions - An array of extension paths, or null.
  * @param hookName - The name of the hook to run.
  * @param context - The context object to pass to the hook.
  * @returns A Promise that resolves when all hooks have been run.
  */
 export async function runExtensionHook(
-  extensions: string[] | undefined,
+  extensions: string[] | null | undefined,
   hookName: string,
   context: any,
 ) {
@@ -271,7 +271,7 @@ export async function runExtensionHook(
     return;
   }
 
-  telemetry.recordOnce('feature_used', {
+  telemetry.record('feature_used', {
     feature: 'extension_hook',
   });
 

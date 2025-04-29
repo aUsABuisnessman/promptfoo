@@ -24,10 +24,12 @@ import type {
   EvaluateOptions,
   Scenario,
   TestSuite,
+  TokenUsage,
   UnifiedConfig,
 } from '../types';
 import { OutputFileExtension, TestSuiteSchema } from '../types';
 import { CommandLineOptionsSchema } from '../types';
+import { isApiProvider } from '../types/providers';
 import { isRunningUnderNpx, maybeLoadFromExternalFile } from '../util';
 import { printBorder, setupEnv, writeMultipleOutputs } from '../util';
 import { clearConfigCache, loadDefaultConfig } from '../util/config/default';
@@ -61,6 +63,35 @@ function showRedteamProviderLabelMissingWarning(testSuite: TestSuite) {
   }
 }
 
+/**
+ * Format token usage for display in CLI output
+ */
+function formatTokenUsage(type: string, usage: Partial<TokenUsage>): string {
+  const parts = [];
+
+  if (usage.total !== undefined) {
+    parts.push(`${type} tokens: ${usage.total.toLocaleString()}`);
+  }
+
+  if (usage.prompt !== undefined) {
+    parts.push(`Prompt tokens: ${usage.prompt.toLocaleString()}`);
+  }
+
+  if (usage.completion !== undefined) {
+    parts.push(`Completion tokens: ${usage.completion.toLocaleString()}`);
+  }
+
+  if (usage.cached !== undefined) {
+    parts.push(`Cached tokens: ${usage.cached.toLocaleString()}`);
+  }
+
+  if (usage.completionDetails?.reasoning !== undefined) {
+    parts.push(`Reasoning tokens: ${usage.completionDetails.reasoning.toLocaleString()}`);
+  }
+
+  return parts.join(' / ');
+}
+
 export async function doEval(
   cmdObj: Partial<CommandLineOptions & Command>,
   defaultConfig: Partial<UnifiedConfig>,
@@ -84,7 +115,6 @@ export async function doEval(
       // Only set when redteam is enabled for sure, because we don't know if config is loaded yet
       ...(Boolean(config?.redteam) && { isRedteam: true }),
     });
-    await telemetry.send();
 
     if (cmdObj.write) {
       await runDbMigrations();
@@ -125,6 +155,20 @@ export async function doEval(
     }
 
     ({ config, testSuite, basePath: _basePath } = await resolveConfigs(cmdObj, defaultConfig));
+
+    // Check if config has redteam section but no test cases
+    if (
+      config.redteam &&
+      (!testSuite.tests || testSuite.tests.length === 0) &&
+      (!testSuite.scenarios || testSuite.scenarios.length === 0)
+    ) {
+      logger.warn(
+        chalk.yellow(dedent`
+        Warning: Config file has a redteam section but no test cases.
+        Did you mean to run ${chalk.bold('promptfoo redteam generate')} instead?
+        `),
+      );
+    }
 
     // Ensure evaluateOptions from the config file are applied
     if (config.evaluateOptions) {
@@ -244,6 +288,17 @@ export async function doEval(
         acceptedPrediction: 0,
         rejectedPrediction: 0,
       },
+      assertions: {
+        total: 0,
+        prompt: 0,
+        completion: 0,
+        cached: 0,
+        completionDetails: {
+          reasoning: 0,
+          acceptedPrediction: 0,
+          rejectedPrediction: 0,
+        },
+      },
     };
 
     // Calculate our total successes and failures
@@ -269,6 +324,21 @@ export async function doEval(
           prompt.metrics.tokenUsage.completionDetails.acceptedPrediction || 0;
         tokenUsage.completionDetails.rejectedPrediction +=
           prompt.metrics.tokenUsage.completionDetails.rejectedPrediction || 0;
+      }
+      if (prompt.metrics?.tokenUsage?.assertions) {
+        tokenUsage.assertions.total += prompt.metrics.tokenUsage.assertions.total || 0;
+        tokenUsage.assertions.prompt += prompt.metrics.tokenUsage.assertions.prompt || 0;
+        tokenUsage.assertions.completion += prompt.metrics.tokenUsage.assertions.completion || 0;
+        tokenUsage.assertions.cached += prompt.metrics.tokenUsage.assertions.cached || 0;
+
+        if (prompt.metrics.tokenUsage.assertions.completionDetails) {
+          tokenUsage.assertions.completionDetails.reasoning +=
+            prompt.metrics.tokenUsage.assertions.completionDetails.reasoning || 0;
+          tokenUsage.assertions.completionDetails.acceptedPrediction +=
+            prompt.metrics.tokenUsage.assertions.completionDetails.acceptedPrediction || 0;
+          tokenUsage.assertions.completionDetails.rejectedPrediction +=
+            prompt.metrics.tokenUsage.assertions.completionDetails.rejectedPrediction || 0;
+        }
       }
     }
     const totalTests = successes + failures + errors;
@@ -351,8 +421,29 @@ export async function doEval(
       logger.info(chalk.blue.bold(`Pass Rate: ${passRate.toFixed(2)}%`));
     }
     if (tokenUsage.total > 0) {
+      const evalTokens = {
+        total: tokenUsage.total,
+        prompt: tokenUsage.prompt,
+        completion: tokenUsage.completion,
+        cached: tokenUsage.cached,
+        completionDetails: tokenUsage.completionDetails,
+      };
+
+      if (isRedteam) {
+        logger.info(
+          `Model probes: ${tokenUsage.numRequests.toLocaleString()} / ${formatTokenUsage('eval', evalTokens)}`,
+        );
+      } else {
+        logger.info(formatTokenUsage('Eval', evalTokens));
+      }
+
+      if (tokenUsage.assertions.total > 0) {
+        logger.info(formatTokenUsage('Grading', tokenUsage.assertions));
+      }
+
+      const combinedTotal = evalTokens.total + tokenUsage.assertions.total;
       logger.info(
-        `${isRedteam ? `Total probes: ${tokenUsage.numRequests.toLocaleString()} / ` : ''}Total tokens: ${tokenUsage.total.toLocaleString()} / Prompt tokens: ${tokenUsage.prompt.toLocaleString()} / Completion tokens: ${tokenUsage.completion.toLocaleString()} / Cached tokens: ${tokenUsage.cached.toLocaleString()}${tokenUsage.completionDetails?.reasoning ? ` / Reasoning tokens: ${tokenUsage.completionDetails.reasoning.toLocaleString()}` : ''}`,
+        `Total tokens: ${combinedTotal.toLocaleString()} (eval: ${evalTokens.total.toLocaleString()} + Grading: ${tokenUsage.assertions.total.toLocaleString()})`,
       );
     }
 
@@ -362,7 +453,6 @@ export async function doEval(
       duration: Math.round((Date.now() - startTime) / 1000),
       isRedteam,
     });
-    await telemetry.send();
 
     if (cmdObj.watch) {
       if (initialization) {
@@ -453,6 +543,16 @@ export async function doEval(
     if (testSuite.redteam) {
       showRedteamProviderLabelMissingWarning(testSuite);
     }
+
+    // Clean up any WebSocket connections
+    if (testSuite.providers.length > 0) {
+      for (const provider of testSuite.providers) {
+        if (isApiProvider(provider)) {
+          provider?.cleanup?.();
+        }
+      }
+    }
+
     return ret;
   };
 

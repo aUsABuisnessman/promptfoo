@@ -139,6 +139,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful content',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -153,6 +154,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful content',
+    isRemote: true,
   },
   {
     category: 'Security and Access Control',
@@ -355,6 +357,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -369,6 +372,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -383,6 +387,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -397,6 +402,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -411,6 +417,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -425,6 +432,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -439,6 +447,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -453,6 +462,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -467,20 +477,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
-  },
-  {
-    category: 'Compliance and Legal',
-    description: 'Content related to methamphetamine',
-    label: 'harmful',
-    link: '/docs/red-team/plugins/harmful/',
-    name: 'Methamphetamine',
-    pluginId: 'harmful:illegal-drugs:meth',
-    applicationTypes: {
-      rag: true,
-      agent: true,
-      chat: true,
-    },
-    vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -495,6 +492,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -509,6 +507,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -523,20 +522,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
-  },
-  {
-    category: 'Compliance and Legal',
-    description: 'Content related to generating malicious code',
-    label: 'harmful',
-    link: '/docs/red-team/plugins/harmful/',
-    name: 'Malicious Code',
-    pluginId: 'harmful:cybercrime:malicious-code',
-    applicationTypes: {
-      rag: true,
-      agent: true,
-      chat: true,
-    },
-    vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Brand',
@@ -566,6 +552,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Security and Access Control',
@@ -580,6 +567,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'privacy',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -594,6 +582,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -608,6 +597,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -622,6 +612,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -636,6 +627,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Trust and Safety',
@@ -650,6 +642,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'harmful',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -679,6 +672,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'misinformation and misuse',
+    isRemote: true,
   },
   {
     category: 'Compliance and Legal',
@@ -693,20 +687,7 @@ export const PLUGINS = [
       chat: true,
     },
     vulnerabilityType: 'criminal',
-  },
-  {
-    category: 'Compliance and Legal',
-    description: 'Content related to creating Improvised Explosive Devices',
-    label: 'harmful',
-    link: '/docs/red-team/plugins/harmful/',
-    name: 'IEDs',
-    pluginId: 'harmful:weapons:ied',
-    applicationTypes: {
-      rag: true,
-      agent: true,
-      chat: true,
-    },
-    vulnerabilityType: 'criminal',
+    isRemote: true,
   },
   {
     category: 'Security and Access Control',
@@ -998,6 +979,22 @@ export const PLUGINS = [
     isRemote: true,
   },
   {
+    category: 'Security and Access Control',
+    description:
+      'Simulates Context Compliance Attacks to test whether an AI system can be tricked into generating restricted content using manipulated chat history.',
+    label: 'security',
+    link: '/docs/red-team/plugins/context-compliance-attack/',
+    name: 'CCA',
+    pluginId: 'cca',
+    applicationTypes: {
+      rag: true,
+      agent: true,
+      chat: false,
+    },
+    vulnerabilityType: 'security',
+    isRemote: true,
+  },
+  {
     applicationTypes: {
       agent: true,
       chat: true,
@@ -1010,6 +1007,35 @@ export const PLUGINS = [
     link: '/docs/red-team/plugins/tool-discovery/',
     name: 'Tool Discovery',
     pluginId: 'tool-discovery',
+    vulnerabilityType: 'security',
+  },
+  {
+    category: 'Trust and Safety',
+    description: 'Tests how well LLMs handle harmful queries using the DoNotAnswer dataset',
+    label: 'technical',
+    link: '/docs/red-team/plugins/donotanswer/',
+    name: 'DoNotAnswer',
+    pluginId: 'donotanswer',
+    applicationTypes: {
+      rag: true,
+      agent: true,
+      chat: true,
+    },
+    vulnerabilityType: 'security',
+  },
+  {
+    category: 'Trust and Safety',
+    description:
+      'Tests how well LLMs handle ambiguous words (homonyms) that can have both harmful and benign interpretations',
+    label: 'technical',
+    link: '/docs/red-team/plugins/xstest/',
+    name: 'XSTest',
+    pluginId: 'xstest',
+    applicationTypes: {
+      rag: true,
+      agent: true,
+      chat: true,
+    },
     vulnerabilityType: 'security',
   },
 ] as const as readonly Plugin[];

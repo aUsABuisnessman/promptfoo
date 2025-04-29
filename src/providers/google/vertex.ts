@@ -1,5 +1,4 @@
 import type { GaxiosError } from 'gaxios';
-import Clone from 'rfdc';
 import { getCache, isCacheEnabled } from '../../cache';
 import cliState from '../../cliState';
 import { getEnvString } from '../../envars';
@@ -14,20 +13,23 @@ import type {
 } from '../../types';
 import type { EnvOverrides } from '../../types/env';
 import { isValidJson } from '../../util/json';
-import { getNunjucksEngine } from '../../util/templates';
 import { parseChatPrompt, REQUEST_TIMEOUT_MS } from '../shared';
-import type { ClaudeRequest, ClaudeResponse, CompletionOptions, Content } from './types';
-import type { GeminiErrorResponse, GeminiFormat, Palm2ApiResponse } from './util';
+import type { ClaudeRequest, ClaudeResponse, CompletionOptions } from './types';
+import type {
+  GeminiApiResponse,
+  GeminiErrorResponse,
+  GeminiFormat,
+  GeminiResponseData,
+  Palm2ApiResponse,
+} from './util';
 import {
+  geminiFormatAndSystemInstructions,
+  getCandidate,
   getGoogleClient,
   loadFile,
-  maybeCoerceToGeminiFormat,
-  type GeminiApiResponse,
-  type GeminiResponseData,
-  stringifyCandidateContents,
+  mergeParts,
+  formatCandidateContents,
 } from './util';
-
-const clone = Clone();
 
 class VertexGenericProvider implements ApiProvider {
   modelName: string;
@@ -248,38 +250,11 @@ export class VertexChatProvider extends VertexGenericProvider {
 
   async callGeminiApi(prompt: string, context?: CallApiContextParams): Promise<ProviderResponse> {
     // https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini#gemini-pro
-    let contents: GeminiFormat | { role: string; parts: { text: string } } = parseChatPrompt(
+    const { contents, systemInstruction } = geminiFormatAndSystemInstructions(
       prompt,
-      {
-        role: 'user',
-        parts: {
-          text: prompt,
-        },
-      },
+      context?.vars,
+      this.config.systemInstruction,
     );
-    const {
-      contents: updatedContents,
-      coerced,
-      systemInstruction: parsedSystemInstruction,
-    } = maybeCoerceToGeminiFormat(contents);
-    if (coerced) {
-      logger.debug(`Coerced JSON prompt to Gemini format: ${JSON.stringify(contents)}`);
-      contents = updatedContents;
-    }
-
-    let systemInstruction: Content | undefined = parsedSystemInstruction;
-    if (this.config.systemInstruction && !systemInstruction) {
-      // Make a copy
-      systemInstruction = clone(this.config.systemInstruction);
-      if (systemInstruction && context?.vars) {
-        const nunjucks = getNunjucksEngine();
-        for (const part of systemInstruction.parts) {
-          if (part.text) {
-            part.text = nunjucks.renderString(part.text, context.vars);
-          }
-        }
-      }
-    }
     // https://ai.google.dev/api/rest/v1/models/streamGenerateContent
     const body = {
       contents: contents as GeminiFormat,
@@ -355,7 +330,6 @@ export class VertexChatProvider extends VertexGenericProvider {
         };
       }
 
-      logger.debug(`Gemini API response: ${JSON.stringify(data)}`);
       try {
         const dataWithError = data as GeminiErrorResponse[];
         const error = dataWithError[0]?.error;
@@ -365,44 +339,35 @@ export class VertexChatProvider extends VertexGenericProvider {
           };
         }
         const dataWithResponse = data as GeminiResponseData[];
-        let output = '';
+        let output;
         for (const datum of dataWithResponse) {
-          if (datum.candidates && datum.candidates[0]?.content?.parts) {
-            output += stringifyCandidateContents(datum);
-          } else if (datum.candidates && datum.candidates[0]?.finishReason === 'SAFETY') {
+          const candidate = getCandidate(datum);
+          if (candidate.finishReason && candidate.finishReason === 'SAFETY') {
+            const finishReason = 'Content was blocked due to safety settings.';
             if (cliState.config?.redteam) {
               // Refusals are not errors during redteams, they're actually successes.
-              return {
-                output: 'Content was blocked due to safety settings.',
-              };
+              return { output: finishReason };
             }
-            return {
-              error: 'Content was blocked due to safety settings.',
-            };
-          } else if (datum.candidates && datum.candidates[0]?.finishReason !== 'STOP') {
+            return { error: finishReason };
+          } else if (candidate.finishReason && candidate.finishReason !== 'STOP') {
             // e.g. MALFORMED_FUNCTION_CALL
             return {
-              error: `Finish reason ${datum.candidates[0]?.finishReason}: ${JSON.stringify(data)}`,
+              error: `Finish reason ${candidate.finishReason}: ${JSON.stringify(data)}`,
             };
-          }
-        }
-
-        if ('promptFeedback' in data[0] && data[0].promptFeedback?.blockReason) {
-          if (cliState.config?.redteam) {
-            // Refusals are not errors during redteams, they're actually successes.
+          } else if (datum.promptFeedback?.blockReason) {
+            const blockReason = `Content was blocked due to safety settings: ${datum.promptFeedback.blockReason}`;
+            if (cliState.config?.redteam) {
+              // Refusals are not errors during redteams, they're actually successes.
+              return { output: blockReason };
+            }
+            return { error: blockReason };
+          } else if (candidate.content?.parts) {
+            output = mergeParts(output, formatCandidateContents(candidate));
+          } else {
             return {
-              output: `Content was blocked due to safety settings: ${data[0].promptFeedback.blockReason}`,
+              error: `No output found in response: ${JSON.stringify(data)}`,
             };
           }
-          return {
-            error: `Content was blocked due to safety settings: ${data[0].promptFeedback.blockReason}`,
-          };
-        }
-
-        if (!output) {
-          return {
-            error: `No output found in response: ${JSON.stringify(data)}`,
-          };
         }
 
         const lastData = dataWithResponse[dataWithResponse.length - 1];

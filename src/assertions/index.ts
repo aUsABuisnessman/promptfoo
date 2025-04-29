@@ -57,7 +57,9 @@ import { handleContextRelevance } from './contextRelevance';
 import { handleCost } from './cost';
 import { handleEquals } from './equals';
 import { handleFactuality } from './factuality';
+import { handleIsValidFunctionCall } from './functionToolCall';
 import { handleGEval } from './geval';
+import { handleGleuScore } from './gleu';
 import { handleGuardrails } from './guardrails';
 import { handleJavascript } from './javascript';
 import { handleContainsJson, handleIsJson } from './json';
@@ -66,7 +68,7 @@ import { handleLevenshtein } from './levenshtein';
 import { handleLlmRubric } from './llmRubric';
 import { handleModelGradedClosedQa } from './modelGradedClosedQa';
 import { handleModeration } from './moderation';
-import { handleIsValidOpenAiFunctionCall, handleIsValidOpenAiToolsCall } from './openai';
+import { handleIsValidOpenAiToolsCall } from './openai';
 import { handlePerplexity, handlePerplexityScore } from './perplexity';
 import { handlePython } from './python';
 import { handleRedteam } from './redteam';
@@ -247,6 +249,7 @@ export async function runAssertion({
     cost: handleCost,
     equals: handleEquals,
     factuality: handleFactuality,
+    gleu: handleGleuScore,
     guardrails: handleGuardrails,
     'g-eval': handleGEval,
     icontains: handleIContains,
@@ -255,13 +258,31 @@ export async function runAssertion({
     'is-json': handleIsJson,
     'is-refusal': handleIsRefusal,
     'is-sql': handleIsSql,
-    'is-valid-openai-function-call': handleIsValidOpenAiFunctionCall,
+    'is-valid-function-call': handleIsValidFunctionCall,
+    'is-valid-openai-function-call': handleIsValidFunctionCall,
     'is-valid-openai-tools-call': handleIsValidOpenAiToolsCall,
     'is-xml': handleIsXml,
     javascript: handleJavascript,
     latency: handleLatency,
     levenshtein: handleLevenshtein,
     'llm-rubric': handleLlmRubric,
+    meteor: async (params: AssertionParams) => {
+      try {
+        const { handleMeteorAssertion } = await import('./meteor');
+        return handleMeteorAssertion(params);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Cannot find module')) {
+          return {
+            pass: false,
+            score: 0,
+            reason:
+              'METEOR assertion requires the natural package. Please install it using: npm install natural',
+            assertion: params.assertion,
+          };
+        }
+        throw error;
+      }
+    },
     'model-graded-closedqa': handleModelGradedClosedQa,
     'model-graded-factuality': handleFactuality,
     moderation: handleModeration,

@@ -14,11 +14,12 @@ import { parseChatPrompt, REQUEST_TIMEOUT_MS } from '../shared';
 import { CHAT_MODELS } from './shared';
 import type { CompletionOptions } from './types';
 import {
-  type GeminiResponseData,
   loadFile,
-  maybeCoerceToGeminiFormat,
-  stringifyCandidateContents,
+  formatCandidateContents,
+  geminiFormatAndSystemInstructions,
+  getCandidate,
 } from './util';
+import type { GeminiResponseData } from './util';
 
 const DEFAULT_API_HOST = 'generativelanguage.googleapis.com';
 
@@ -177,8 +178,10 @@ export class AIStudioChatProvider extends AIStudioGenericProvider {
   }
 
   async callGemini(prompt: string, context?: CallApiContextParams): Promise<ProviderResponse> {
-    const { contents, systemInstruction } = maybeCoerceToGeminiFormat(
-      parseChatPrompt(prompt, [{ content: prompt }]),
+    const { contents, systemInstruction } = geminiFormatAndSystemInstructions(
+      prompt,
+      context?.vars,
+      this.config.systemInstruction,
     );
 
     // Determine API version based on model
@@ -249,18 +252,15 @@ export class AIStudioChatProvider extends AIStudioGenericProvider {
     }
 
     logger.debug(`\tGoogle API response: ${JSON.stringify(data)}`);
-    let output;
-    if (data.candidates && data.candidates[0]?.content?.parts) {
-      output = stringifyCandidateContents(data);
-    }
-
-    if (!data?.candidates || data.candidates.length === 0) {
+    let output, candidate;
+    try {
+      candidate = getCandidate(data);
+      output = formatCandidateContents(candidate);
+    } catch (err) {
       return {
-        error: `API did not return any candidate responses: ${JSON.stringify(data)}`,
+        error: `${String(err)}`,
       };
     }
-
-    const candidate = data.candidates[0];
 
     try {
       let guardrails: GuardrailResponse | undefined;

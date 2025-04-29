@@ -171,6 +171,12 @@
                             "HUGGING_FACE_HUB_TOKEN": {
                               "type": "string"
                             },
+                            "JFROG_API_KEY": {
+                              "type": "string"
+                            },
+                            "LAMBDA_API_KEY": {
+                              "type": "string"
+                            },
                             "LANGFUSE_HOST": {
                               "type": "string"
                             },
@@ -178,6 +184,9 @@
                               "type": "string"
                             },
                             "LANGFUSE_SECRET_KEY": {
+                              "type": "string"
+                            },
+                            "LITELLM_API_BASE": {
                               "type": "string"
                             },
                             "LLAMA_BASE_URL": {
@@ -494,12 +503,12 @@
                                               "answer-relevance",
                                               "bleu",
                                               "classifier",
+                                              "contains",
                                               "contains-all",
                                               "contains-any",
                                               "contains-json",
                                               "contains-sql",
                                               "contains-xml",
-                                              "contains",
                                               "context-faithfulness",
                                               "context-recall",
                                               "context-relevance",
@@ -507,13 +516,15 @@
                                               "equals",
                                               "factuality",
                                               "g-eval",
+                                              "gleu",
                                               "guardrails",
+                                              "icontains",
                                               "icontains-all",
                                               "icontains-any",
-                                              "icontains",
                                               "is-json",
                                               "is-refusal",
                                               "is-sql",
+                                              "is-valid-function-call",
                                               "is-valid-openai-function-call",
                                               "is-valid-openai-tools-call",
                                               "is-xml",
@@ -521,11 +532,12 @@
                                               "latency",
                                               "levenshtein",
                                               "llm-rubric",
+                                              "meteor",
                                               "model-graded-closedqa",
                                               "model-graded-factuality",
                                               "moderation",
-                                              "perplexity-score",
                                               "perplexity",
+                                              "perplexity-score",
                                               "python",
                                               "regex",
                                               "rouge-n",
@@ -941,10 +953,17 @@
           }
         },
         "extensions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "metadata": {
           "$ref": "#/definitions/PromptfooConfigSchema/properties/tests/anyOf/1/items/anyOf/1/properties/metadata/allOf/0"
@@ -1004,6 +1023,7 @@
                           "bfla",
                           "bias",
                           "bola",
+                          "cca",
                           "competitors",
                           "contracts",
                           "cross-session-leak",
@@ -1011,6 +1031,7 @@
                           "debug-access",
                           "default",
                           "divergent-repetition",
+                          "donotanswer",
                           "excessive-agency",
                           "foundation",
                           "hallucination",
@@ -1125,8 +1146,10 @@
                           "ssrf",
                           "system-prompt-override",
                           "tool-discovery",
+                          "tool-discovery:multi-turn",
                           "toxicity",
-                          "unsafebench"
+                          "unsafebench",
+                          "xstest"
                         ]
                       },
                       {
@@ -1149,6 +1172,7 @@
                               "bfla",
                               "bias",
                               "bola",
+                              "cca",
                               "competitors",
                               "contracts",
                               "cross-session-leak",
@@ -1156,6 +1180,7 @@
                               "debug-access",
                               "default",
                               "divergent-repetition",
+                              "donotanswer",
                               "excessive-agency",
                               "foundation",
                               "hallucination",
@@ -1270,8 +1295,10 @@
                               "ssrf",
                               "system-prompt-override",
                               "tool-discovery",
+                              "tool-discovery:multi-turn",
                               "toxicity",
-                              "unsafebench"
+                              "unsafebench",
+                              "xstest"
                             ]
                           },
                           {
@@ -1324,6 +1351,7 @@
                           "gcg",
                           "goat",
                           "hex",
+                          "homoglyph",
                           "image",
                           "jailbreak",
                           "jailbreak:composite",
@@ -1331,8 +1359,11 @@
                           "jailbreak:tree",
                           "leetspeak",
                           "math-prompt",
+                          "morse",
                           "multilingual",
+                          "other-encodings",
                           "pandamonium",
+                          "piglatin",
                           "prompt-injection",
                           "retry",
                           "rot13"
@@ -1363,7 +1394,7 @@
                   }
                 ]
               },
-              "description": "Strategies to use for redteam generation.\n\nDefaults to basic, jailbreak, jailbreak:composite\nSupports audio, base64, basic, best-of-n, citation, crescendo, default, gcg, goat, hex, image, jailbreak, jailbreak:composite, jailbreak:likert, jailbreak:tree, leetspeak, math-prompt, multilingual, pandamonium, prompt-injection, retry, rot13",
+              "description": "Strategies to use for redteam generation.\n\nDefaults to basic, jailbreak, jailbreak:composite\nSupports audio, base64, basic, best-of-n, citation, crescendo, default, gcg, goat, hex, homoglyph, image, jailbreak, jailbreak:composite, jailbreak:likert, jailbreak:tree, leetspeak, math-prompt, morse, multilingual, other-encodings, pandamonium, piglatin, prompt-injection, retry, rot13",
               "default": [
                 "default"
               ]

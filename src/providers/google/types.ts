@@ -18,7 +18,7 @@ interface FileData {
   fileUri: string;
 }
 
-interface Part {
+export interface Part {
   text?: string;
   inlineData?: Blob;
   functionCall?: FunctionCall;
@@ -31,7 +31,7 @@ export interface Content {
   role?: string;
 }
 
-interface Schema {
+export interface Schema {
   type: 'TYPE_UNSPECIFIED' | 'STRING' | 'NUMBER' | 'INTEGER' | 'BOOLEAN' | 'ARRAY' | 'OBJECT';
   format?: string;
   description?: string;
@@ -45,9 +45,21 @@ interface Schema {
   items?: Schema;
 }
 
+type SchemaType = Schema['type']; // Create a type alias for convenience
+
+export const VALID_SCHEMA_TYPES: ReadonlyArray<SchemaType> = [
+  'TYPE_UNSPECIFIED',
+  'STRING',
+  'NUMBER',
+  'INTEGER',
+  'BOOLEAN',
+  'ARRAY',
+  'OBJECT',
+];
+
 interface FunctionDeclaration {
   name: string;
-  description: string;
+  description?: string;
   parameters?: Schema;
   response?: Schema;
 }
@@ -109,6 +121,11 @@ export interface CompletionOptions {
 
     // Live API
     response_modalities?: string[];
+
+    // Thinking configuration
+    thinkingConfig?: {
+      thinkingBudget?: number;
+    };
   };
 
   responseSchema?: string;
@@ -127,6 +144,16 @@ export interface CompletionOptions {
    * these function tools.
    */
   functionToolCallbacks?: Record<string, (arg: string) => Promise<any>>;
+
+  /**
+   * If set, spawn a python process with the file and connect to its API
+   * for function tool calls at the specified URL.
+   */
+  functionToolStatefulApi?: {
+    url: string;
+    file?: string;
+    pythonExecutable?: string;
+  };
 
   systemInstruction?: Content;
 
