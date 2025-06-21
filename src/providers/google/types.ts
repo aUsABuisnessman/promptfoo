@@ -1,3 +1,5 @@
+import type { MCPConfig } from '../mcp/types';
+
 interface Blob {
   mimeType: string;
   data: string; // base64-encoded string
@@ -57,7 +59,7 @@ export const VALID_SCHEMA_TYPES: ReadonlyArray<SchemaType> = [
   'OBJECT',
 ];
 
-interface FunctionDeclaration {
+export interface FunctionDeclaration {
   name: string;
   description?: string;
   parameters?: Schema;
@@ -78,15 +80,23 @@ export interface Tool {
   googleSearchRetrieval?: GoogleSearchRetrieval;
   codeExecution?: object;
   googleSearch?: object;
+
+  // Note: These snake_case properties are supported but should be accessed with type assertions
+  // Type definitions included for documentation purposes only
+  // google_search_retrieval?: GoogleSearchRetrieval;
+  // code_execution?: object;
+  // google_search?: object;
 }
 
 export interface CompletionOptions {
   apiKey?: string;
   apiHost?: string;
+  apiBaseUrl?: string;
+  headers?: { [key: string]: string }; // Custom headers for the request
   projectId?: string;
   region?: string;
   publisher?: string;
-  apiVersion?: string;
+  apiVersion?: string; // For Live API: 'v1alpha' or 'v1' (default: v1alpha)
   anthropicVersion?: string;
   anthropic_version?: string; // Alternative format
 
@@ -122,6 +132,28 @@ export interface CompletionOptions {
     // Live API
     response_modalities?: string[];
 
+    // Speech configuration
+    speechConfig?: {
+      voiceConfig?: {
+        prebuiltVoiceConfig?: {
+          voiceName?: string;
+        };
+      };
+      languageCode?: string;
+    };
+
+    // Transcription configuration
+    outputAudioTranscription?: Record<string, any>;
+    inputAudioTranscription?: Record<string, any>;
+
+    // Affective dialog (v1alpha only)
+    enableAffectiveDialog?: boolean;
+
+    // Proactive audio (v1alpha only)
+    proactivity?: {
+      proactiveAudio?: boolean;
+    };
+
     // Thinking configuration
     thinkingConfig?: {
       thinkingBudget?: number;
@@ -143,7 +175,7 @@ export interface CompletionOptions {
    * If set, automatically call these functions when the assistant activates
    * these function tools.
    */
-  functionToolCallbacks?: Record<string, (arg: string) => Promise<any>>;
+  functionToolCallbacks?: Record<string, ((arg: string) => Promise<any>) | string>;
 
   /**
    * If set, spawn a python process with the file and connect to its API
@@ -155,7 +187,7 @@ export interface CompletionOptions {
     pythonExecutable?: string;
   };
 
-  systemInstruction?: Content;
+  systemInstruction?: Content | string;
 
   /**
    * Model-specific configuration for Llama models
@@ -166,6 +198,8 @@ export interface CompletionOptions {
       llama_guard_settings?: Record<string, unknown>;
     };
   };
+
+  mcp?: MCPConfig;
 }
 
 // Claude API interfaces

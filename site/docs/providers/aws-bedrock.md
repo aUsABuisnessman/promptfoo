@@ -30,7 +30,7 @@ The `bedrock` lets you use Amazon Bedrock in your evals. This is a common way to
 
    ```yaml
    providers:
-     - id: bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0
+     - id: bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0
    ```
 
    Note that the provider is `bedrock:` followed by the [ARN/model id](https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html#model-ids-arns) of the model.
@@ -72,7 +72,7 @@ Specify direct access keys in your config:
 
 ```yaml title="promptfooconfig.yaml"
 providers:
-  - id: bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  - id: bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0
     config:
       accessKeyId: 'YOUR_ACCESS_KEY_ID'
       secretAccessKey: 'YOUR_SECRET_ACCESS_KEY'
@@ -88,7 +88,7 @@ Use a profile from your AWS configuration:
 
 ```yaml title="promptfooconfig.yaml"
 providers:
-  - id: bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  - id: bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0
     config:
       profile: 'YOUR_SSO_PROFILE'
       region: 'us-east-1' # Optional, defaults to us-east-1
@@ -100,7 +100,7 @@ Rely on the AWS default credential chain:
 
 ```yaml title="promptfooconfig.yaml"
 providers:
-  - id: bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  - id: bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0
     config:
       region: 'us-east-1' # Only region specified
 ```
@@ -131,7 +131,23 @@ providers:
       interfaceConfig:
         temperature: 0.7
         max_new_tokens: 256
-  - id: bedrock:anthropic.claude-3-5-sonnet-20240229-v1:0
+  - id: bedrock:us.amazon.nova-premier-v1:0
+    config:
+      region: 'us-east-1'
+      interfaceConfig:
+        temperature: 0.7
+        max_new_tokens: 256
+  - id: bedrock:us.anthropic.claude-opus-4-20250514-v1:0
+    config:
+      region: 'us-east-1'
+      temperature: 0.7
+      max_tokens: 256
+  - id: bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0
+    config:
+      region: 'us-east-1'
+      temperature: 0.7
+      max_tokens: 256
+  - id: bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0
     config:
       region: 'us-east-1'
       temperature: 0.7
@@ -152,7 +168,7 @@ Different models may support different configuration options. Here are some mode
 
 ### Amazon Nova Models
 
-Amazon Nova models (e.g., `amazon.nova-lite-v1:0`, `amazon.nova-pro-v1:0`, `amazon.nova-micro-v1:0`) support advanced features like tool use and structured outputs. You can configure them with the following options:
+Amazon Nova models (e.g., `amazon.nova-lite-v1:0`, `amazon.nova-pro-v1:0`, `amazon.nova-micro-v1:0`, `amazon.nova-premier-v1:0`) support advanced features like tool use and structured outputs. You can configure them with the following options:
 
 ```yaml
 providers:
@@ -188,6 +204,42 @@ Nova models use a slightly different configuration structure compared to other B
 
 :::
 
+### Amazon Nova Sonic Model
+
+The Amazon Nova Sonic model (`amazon.nova-sonic-v1:0`) is a multimodal model that supports audio input and text/audio output with tool-using capabilities. It has a different configuration structure compared to other Nova models:
+
+```yaml
+providers:
+  - id: bedrock:amazon.nova-sonic-v1:0
+    config:
+      inferenceConfiguration:
+        maxTokens: 1024 # Maximum number of tokens to generate
+        temperature: 0.7 # Controls randomness (0.0 to 1.0)
+        topP: 0.95 # Nucleus sampling parameter
+      textOutputConfiguration:
+        mediaType: text/plain
+      toolConfiguration: # Optional tool configuration
+        tools:
+          - toolSpec:
+              name: 'getDateTool'
+              description: 'Get information about the current date'
+              inputSchema:
+                json: '{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{},"required":[]}'
+      toolUseOutputConfiguration:
+        mediaType: application/json
+      # Optional audio output configuration
+      audioOutputConfiguration:
+        mediaType: audio/lpcm
+        sampleRateHertz: 24000
+        sampleSizeBits: 16
+        channelCount: 1
+        voiceId: matthew
+        encoding: base64
+        audioType: SPEECH
+```
+
+Note: Nova Sonic has advanced multimodal capabilities including audio input/output, but audio input requires base64 encoded data which may be better handled through the API directly rather than in the configuration file.
+
 ### AI21 Models
 
 For AI21 models (e.g., `ai21.jamba-1-5-mini-v1:0`, `ai21.jamba-1-5-large-v1:0`), you can use the following configuration options:
@@ -203,7 +255,7 @@ config:
 
 ### Claude Models
 
-For Claude models (e.g., `anthropic.us.claude-3-5-sonnet-20241022-v2:0`), you can use the following configuration options:
+For Claude models (e.g., `anthropic.claude-sonnet-4-20250514-v1:0`, `anthropic.us.claude-3-5-sonnet-20241022-v2:0`), you can use the following configuration options:
 
 ```yaml
 config:
@@ -252,7 +304,7 @@ config:
 
 ### Llama
 
-For Llama models (e.g., `meta.llama3-1-70b-instruct-v1:0`, `meta.llama3-2-90b-instruct-v1:0`, `meta.llama3-3-70b-instruct-v1:0`), you can use the following configuration options:
+For Llama models (e.g., `meta.llama3-1-70b-instruct-v1:0`, `meta.llama3-2-90b-instruct-v1:0`, `meta.llama3-3-70b-instruct-v1:0`, `meta.llama4-scout-17b-instruct-v1:0`, `meta.llama4-maverick-17b-instruct-v1:0`), you can use the following configuration options:
 
 ```yaml
 config:
@@ -310,7 +362,7 @@ This allows you to access the model's reasoning process during generation while 
 
 ## Model-graded tests
 
-You can use Bedrock models to grade outputs. By default, model-graded tests use gpt-4.1-2025-04-14 and require the `OPENAI_API_KEY` environment variable to be set. However, when using AWS Bedrock, you have the option of overriding the grader for [model-graded assertions](/docs/configuration/expected-outputs/model-graded/) to point to AWS Bedrock or other providers.
+You can use Bedrock models to grade outputs. By default, model-graded tests use `gpt-4.1-2025-04-14` and require the `OPENAI_API_KEY` environment variable to be set. However, when using AWS Bedrock, you have the option of overriding the grader for [model-graded assertions](/docs/configuration/expected-outputs/model-graded/) to point to AWS Bedrock or other providers.
 
 :::warning
 
@@ -492,13 +544,13 @@ This usually means you need to use the region-specific model ID. Update your pro
 ```yaml
 providers:
   # Instead of this:
-  - id: bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0
+  - id: bedrock:anthropic.claude-sonnet-4-20250514-v1:0
   # Use this:
-  - id: bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0 # US region
+  - id: bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0 # US region
   # or
-  - id: bedrock:eu.anthropic.claude-3-5-sonnet-20241022-v2:0 # EU region
+  - id: bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0 # EU region
   # or
-  - id: bedrock:apac.anthropic.claude-3-5-sonnet-20241022-v2:0 # APAC region
+  - id: bedrock:apac.anthropic.claude-sonnet-4-20250514-v1:0 # APAC region
 ```
 
 Make sure to:

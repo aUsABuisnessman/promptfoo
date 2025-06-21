@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useTelemetry } from '@app/hooks/useTelemetry';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -35,7 +35,11 @@ import {
   type Plugin,
   riskCategories,
   OWASP_LLM_RED_TEAM_MAPPING,
+  EU_AI_ACT_MAPPING,
+  AGENTIC_EXEMPT_PLUGINS,
+  DATASET_EXEMPT_PLUGINS,
 } from '@promptfoo/redteam/constants';
+import type { PluginConfig } from '@promptfoo/redteam/types';
 import { useDebounce } from 'use-debounce';
 import { useRedTeamConfig, useRecentlyUsedPlugins } from '../hooks/useRedTeamConfig';
 import type { LocalPluginConfig } from '../types';
@@ -215,6 +219,10 @@ export default function Plugins({ onNext, onBack }: PluginsProps) {
       plugins: new Set(FOUNDATION_PLUGINS),
     },
     {
+      name: 'Harmful',
+      plugins: new Set(Object.keys(HARM_PLUGINS) as Plugin[]),
+    },
+    {
       name: 'NIST',
       plugins: new Set(Object.values(NIST_AI_RMF_MAPPING).flatMap((v) => v.plugins)),
     },
@@ -233,6 +241,10 @@ export default function Plugins({ onNext, onBack }: PluginsProps) {
     {
       name: 'MITRE',
       plugins: new Set(Object.values(MITRE_ATLAS_MAPPING).flatMap((v) => v.plugins)),
+    },
+    {
+      name: 'EU AI Act',
+      plugins: new Set(Object.values(EU_AI_ACT_MAPPING).flatMap((v) => v.plugins)),
     },
   ];
 
@@ -265,7 +277,7 @@ export default function Plugins({ onNext, onBack }: PluginsProps) {
           return false;
         }
         for (const key in config) {
-          const value = config[key];
+          const value = config[key as keyof PluginConfig];
           if (Array.isArray(value) && value.length === 0) {
             return false;
           }
@@ -293,7 +305,7 @@ export default function Plugins({ onNext, onBack }: PluginsProps) {
     }
 
     for (const key in config) {
-      const value = config[key];
+      const value = config[key as keyof PluginConfig];
       if (Array.isArray(value) && value.length === 0) {
         return false;
       }
@@ -458,8 +470,42 @@ export default function Plugins({ onNext, onBack }: PluginsProps) {
                               {getPluginCategory(plugin)}
                             </Typography>
                           )}
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            {displayNameOverrides[plugin] || categoryAliases[plugin] || plugin}
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                              {displayNameOverrides[plugin] || categoryAliases[plugin] || plugin}
+                            </Typography>
+                            {AGENTIC_EXEMPT_PLUGINS.includes(plugin as any) && (
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  fontSize: '0.7rem',
+                                  color: 'text.secondary',
+                                  fontWeight: 400,
+                                  backgroundColor: 'action.hover',
+                                  px: 0.5,
+                                  py: 0.25,
+                                  borderRadius: 0.5,
+                                }}
+                              >
+                                agentic
+                              </Typography>
+                            )}
+                            {DATASET_EXEMPT_PLUGINS.includes(plugin as any) && (
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  fontSize: '0.7rem',
+                                  color: 'text.secondary',
+                                  fontWeight: 400,
+                                  backgroundColor: 'action.hover',
+                                  px: 0.5,
+                                  py: 0.25,
+                                  borderRadius: 0.5,
+                                }}
+                              >
+                                no strategies
+                              </Typography>
+                            )}
                           </Box>
                           <Typography variant="body2" color="text.secondary">
                             {subCategoryDescriptions[plugin]}
@@ -666,62 +712,34 @@ export default function Plugins({ onNext, onBack }: PluginsProps) {
               <CustomIntentSection />
             </AccordionDetails>
           </Accordion>
-        </Box>
-
-        <Accordion
-          expanded={expandedCategories.has('Custom Policies')}
-          onChange={(event, expanded) => {
-            setExpandedCategories((prev) => {
-              const newSet = new Set(prev);
-              if (expanded) {
-                newSet.add('Custom Policies');
-              } else {
-                newSet.delete('Custom Policies');
-              }
-              return newSet;
-            });
-          }}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="h6" sx={{ fontWeight: 'medium' }}>
-              Custom Policies (
-              {config.plugins.filter((p) => typeof p === 'object' && 'id' in p && p.id === 'policy')
-                .length || 0}
-              )
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <CustomPoliciesSection />
-          </AccordionDetails>
-        </Accordion>
-
-        <Accordion
-          expanded={expandedCategories.has('Custom Policy')}
-          onChange={(event, expanded) => {
-            setExpandedCategories((prev) => {
-              const newSet = new Set(prev);
-              if (expanded) {
-                newSet.add('Custom Policy');
-              } else {
-                newSet.delete('Custom Policy');
-              }
-              return newSet;
-            });
-          }}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="h6" sx={{ fontWeight: 'medium' }}>
-              Custom Policy
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                Add your custom policy content here.
+          <Accordion
+            expanded={expandedCategories.has('Custom Policies')}
+            onChange={(event, expanded) => {
+              setExpandedCategories((prev) => {
+                const newSet = new Set(prev);
+                if (expanded) {
+                  newSet.add('Custom Policies');
+                } else {
+                  newSet.delete('Custom Policies');
+                }
+                return newSet;
+              });
+            }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography variant="h6" sx={{ fontWeight: 'medium' }}>
+                Custom Policies (
+                {config.plugins.filter(
+                  (p) => typeof p === 'object' && 'id' in p && p.id === 'policy',
+                ).length || 0}
+                )
               </Typography>
-            </Box>
-          </AccordionDetails>
-        </Accordion>
+            </AccordionSummary>
+            <AccordionDetails>
+              <CustomPoliciesSection />
+            </AccordionDetails>
+          </Accordion>
+        </Box>
 
         <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 4 }}>
           <Button

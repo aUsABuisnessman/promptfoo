@@ -21,8 +21,8 @@ interface AtomicTestCase {
   success?: boolean;
   score?: number;
   failureReason?: string;
+  metadata?: Record<string, any>;
 }
-
 export interface ProviderModerationResponse {
   error?: string;
   flags?: ModerationFlag[];
@@ -45,7 +45,6 @@ export interface ProviderOptions {
 }
 
 export interface CallApiContextParams {
-  fetchWithCache?: any;
   filters?: NunjucksFilterMap;
   getCache?: any;
   logger?: winston.Logger;
@@ -56,10 +55,15 @@ export interface CallApiContextParams {
   // This was added so we have access to the grader inside the provider.
   // Vars and prompts should be access using the arguments above.
   test?: AtomicTestCase;
+  bustCache?: boolean;
 }
 
 export interface CallApiOptionsParams {
   includeLogProbs?: boolean;
+  /**
+   * Signal that can be used to abort the request
+   */
+  abortSignal?: AbortSignal;
 }
 
 export interface ApiProvider {
@@ -73,7 +77,12 @@ export interface ApiProvider {
   label?: ProviderLabel;
   transform?: string;
   toJSON?: () => any;
-  cleanup?: () => void;
+  /**
+   * Cleanup method called when a provider call is aborted (e.g., due to timeout)
+   * Providers should implement this to clean up any resources they might have
+   * allocated, such as file handles, network connections, etc.
+   */
+  cleanup?: () => void | Promise<void>;
 }
 
 export interface ApiEmbeddingProvider extends ApiProvider {
@@ -105,6 +114,11 @@ export interface ProviderResponse {
   logProbs?: number[];
   metadata?: {
     redteamFinalPrompt?: string;
+    http?: {
+      status: number;
+      statusText: string;
+      headers: Record<string, string>;
+    };
     [key: string]: any;
   };
   raw?: string | any;

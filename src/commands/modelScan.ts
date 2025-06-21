@@ -7,9 +7,9 @@ import logger from '../logger';
 
 const execAsync = promisify(exec);
 
-async function checkModelAuditInstalled(): Promise<boolean> {
+export async function checkModelAuditInstalled(): Promise<boolean> {
   try {
-    await execAsync('python -c "import modelaudit"');
+    await execAsync('which modelaudit');
     return true;
   } catch {
     return false;
@@ -35,7 +35,6 @@ export function modelScanCommand(program: Command): void {
       (val) => Number.parseInt(val, 10),
       300,
     )
-    .option('-v, --verbose', 'Enable verbose output')
     .option('--max-file-size <bytes>', 'Maximum file size to scan in bytes')
     .action(async (paths: string[], options) => {
       if (!paths || paths.length === 0) {
@@ -54,10 +53,7 @@ export function modelScanCommand(program: Command): void {
         process.exit(1);
       }
 
-      const args = ['-m', 'modelaudit'];
-
-      // Add all paths
-      args.push(...paths);
+      const args = ['scan', ...paths];
 
       // Add options
       if (options.blacklist && options.blacklist.length > 0) {
@@ -78,17 +74,13 @@ export function modelScanCommand(program: Command): void {
         args.push('--timeout', options.timeout);
       }
 
-      if (options.verbose) {
-        args.push('--verbose');
-      }
-
       if (options.maxFileSize) {
         args.push('--max-file-size', options.maxFileSize);
       }
 
       logger.info(`Running model scan on: ${paths.join(', ')}`);
 
-      const modelAudit = spawn('python', args, { stdio: 'inherit' });
+      const modelAudit = spawn('modelaudit', args, { stdio: 'inherit' });
 
       modelAudit.on('error', (error) => {
         logger.error(`Failed to start modelaudit: ${error.message}`);

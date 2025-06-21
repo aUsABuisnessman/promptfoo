@@ -11,6 +11,7 @@ import {
   loadFile,
   parseStringObject,
   validateFunctionCall,
+  normalizeTools,
 } from '../../../src/providers/google/util';
 
 jest.mock('google-auth-library');
@@ -38,8 +39,12 @@ jest.mock('fs', () => ({
 
 describe('util', () => {
   beforeEach(() => {
+    jest.clearAllMocks();
     jest.resetAllMocks();
+    // Clear the global cache
     (global as any).cachedAuth = undefined;
+    // Reset the GoogleAuth mock to default behavior
+    jest.mocked(GoogleAuth).mockClear();
   });
 
   describe('parseStringObject', () => {
@@ -724,6 +729,9 @@ describe('util', () => {
 
   describe('getGoogleClient', () => {
     it('should create and return Google client', async () => {
+      // Clear any cached state before this test
+      (global as any).cachedAuth = undefined;
+
       const mockClient = { name: 'mockClient' };
       const mockProjectId = 'test-project';
       const mockAuth = {
@@ -731,6 +739,8 @@ describe('util', () => {
         getProjectId: jest.fn().mockResolvedValue(mockProjectId),
       };
 
+      // Clear and reset the GoogleAuth mock specifically for this test
+      jest.mocked(GoogleAuth).mockClear();
       jest.mocked(GoogleAuth).mockImplementation(() => mockAuth as any);
 
       const result = await getGoogleClient();
@@ -741,6 +751,9 @@ describe('util', () => {
     });
 
     it('should reuse cached auth client', async () => {
+      // Clear any cached state before this test
+      (global as any).cachedAuth = undefined;
+
       const mockClient = { name: 'mockClient' };
       const mockProjectId = 'test-project';
       const mockAuth = {
@@ -748,6 +761,8 @@ describe('util', () => {
         getProjectId: jest.fn().mockResolvedValue(mockProjectId),
       };
 
+      // Clear and reset the GoogleAuth mock specifically for this test
+      jest.mocked(GoogleAuth).mockClear();
       jest.mocked(GoogleAuth).mockImplementation(() => mockAuth as any);
 
       await getGoogleClient();
@@ -760,11 +775,16 @@ describe('util', () => {
 
   describe('hasGoogleDefaultCredentials', () => {
     it('should return true when credentials are available', async () => {
+      // Clear any cached state before this test
+      (global as any).cachedAuth = undefined;
+
       const mockAuth = {
         getClient: jest.fn().mockResolvedValue({}),
         getProjectId: jest.fn().mockResolvedValue('test-project'),
       };
 
+      // Clear and reset the GoogleAuth mock specifically for this test
+      jest.mocked(GoogleAuth).mockClear();
       jest.mocked(GoogleAuth).mockImplementation(() => mockAuth as any);
 
       const result = await hasGoogleDefaultCredentials();
@@ -888,6 +908,107 @@ describe('util', () => {
 
       expect(contents).toEqual([{ parts: [{ text: 'user message' }], role: 'user' }]);
       expect(systemInstruction).toEqual({ parts: [{ text: 'system instruction' }] });
+    });
+  });
+
+  describe('normalizeTools', () => {
+    it('should convert snake_case to camelCase for tool properties', () => {
+      const tools = [
+        {
+          google_search: {},
+        } as any,
+        {
+          code_execution: {},
+        } as any,
+        {
+          google_search_retrieval: {
+            dynamicRetrievalConfig: {
+              mode: 'MODE_DYNAMIC',
+              dynamicThreshold: 0,
+            },
+          },
+        } as any,
+      ];
+
+      const normalized = normalizeTools(tools);
+
+      expect(normalized).toEqual([
+        {
+          google_search: {},
+          googleSearch: {},
+        },
+        {
+          code_execution: {},
+          codeExecution: {},
+        },
+        {
+          google_search_retrieval: {
+            dynamicRetrievalConfig: {
+              mode: 'MODE_DYNAMIC',
+              dynamicThreshold: 0,
+            },
+          },
+          googleSearchRetrieval: {
+            dynamicRetrievalConfig: {
+              mode: 'MODE_DYNAMIC',
+              dynamicThreshold: 0,
+            },
+          },
+        },
+      ]);
+    });
+
+    it('should not override existing camelCase properties', () => {
+      const tools = [
+        {
+          google_search: { property1: 'value1' },
+          googleSearch: { property2: 'value2' },
+        } as any,
+      ];
+
+      const normalized = normalizeTools(tools);
+
+      expect(normalized).toEqual([
+        {
+          google_search: { property1: 'value1' },
+          googleSearch: { property2: 'value2' },
+        },
+      ]);
+    });
+
+    it('should leave other properties unchanged', () => {
+      const tools = [
+        {
+          functionDeclarations: [
+            {
+              name: 'testFunction',
+              description: 'A test function',
+            },
+          ],
+          google_search: {},
+        } as any,
+      ];
+
+      const normalized = normalizeTools(tools);
+
+      expect(normalized).toEqual([
+        {
+          functionDeclarations: [
+            {
+              name: 'testFunction',
+              description: 'A test function',
+            },
+          ],
+          google_search: {},
+          googleSearch: {},
+        },
+      ]);
+    });
+
+    it('should handle empty arrays', () => {
+      const tools: any[] = [];
+      const normalized = normalizeTools(tools);
+      expect(normalized).toEqual([]);
     });
   });
 });

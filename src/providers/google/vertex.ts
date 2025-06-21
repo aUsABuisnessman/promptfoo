@@ -1,7 +1,9 @@
 import type { GaxiosError } from 'gaxios';
+import path from 'path';
 import { getCache, isCacheEnabled } from '../../cache';
 import cliState from '../../cliState';
 import { getEnvString } from '../../envars';
+import { importModule } from '../../esm';
 import logger from '../../logger';
 import type {
   ApiEmbeddingProvider,
@@ -12,14 +14,17 @@ import type {
   TokenUsage,
 } from '../../types';
 import type { EnvOverrides } from '../../types/env';
+import { isJavascriptFile } from '../../util/fileExtensions';
 import { isValidJson } from '../../util/json';
+import { MCPClient } from '../mcp/client';
+import { transformMCPToolsToGoogle } from '../mcp/transform';
 import { parseChatPrompt, REQUEST_TIMEOUT_MS } from '../shared';
 import type { ClaudeRequest, ClaudeResponse, CompletionOptions } from './types';
 import type {
   GeminiApiResponse,
+  GeminiResponseData,
   GeminiErrorResponse,
   GeminiFormat,
-  GeminiResponseData,
   Palm2ApiResponse,
 } from './util';
 import {
@@ -112,13 +117,23 @@ class VertexGenericProvider implements ApiProvider {
 }
 
 export class VertexChatProvider extends VertexGenericProvider {
-  // TODO(ian): Completion models
-  // https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versioning#gemini-model-versions
+  private mcpClient: MCPClient | null = null;
+  private initializationPromise: Promise<void> | null = null;
+  private loadedFunctionCallbacks: Record<string, Function> = {};
+
   constructor(
     modelName: string,
     options: { config?: CompletionOptions; id?: string; env?: EnvOverrides } = {},
   ) {
     super(modelName, options);
+    if (this.config.mcp?.enabled) {
+      this.initializationPromise = this.initializeMCP();
+    }
+  }
+
+  private async initializeMCP(): Promise<void> {
+    this.mcpClient = new MCPClient(this.config.mcp!);
+    await this.mcpClient.initialize();
   }
 
   async callApi(prompt: string, context?: CallApiContextParams): Promise<ProviderResponse> {
@@ -249,12 +264,22 @@ export class VertexChatProvider extends VertexGenericProvider {
   }
 
   async callGeminiApi(prompt: string, context?: CallApiContextParams): Promise<ProviderResponse> {
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+    }
     // https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini#gemini-pro
     const { contents, systemInstruction } = geminiFormatAndSystemInstructions(
       prompt,
       context?.vars,
       this.config.systemInstruction,
     );
+    // --- MCP tool injection logic ---
+    const mcpTools = this.mcpClient ? transformMCPToolsToGoogle(this.mcpClient.getAllTools()) : [];
+    const allTools = [
+      ...mcpTools,
+      ...(this.config.tools ? loadFile(this.config.tools, context?.vars) : []),
+    ];
+    // --- End MCP tool injection logic ---
     // https://ai.google.dev/api/rest/v1/models/streamGenerateContent
     const body = {
       contents: contents as GeminiFormat,
@@ -270,7 +295,7 @@ export class VertexChatProvider extends VertexGenericProvider {
       },
       ...(this.config.safetySettings ? { safetySettings: this.config.safetySettings } : {}),
       ...(this.config.toolConfig ? { toolConfig: this.config.toolConfig } : {}),
-      ...(this.config.tools ? { tools: loadFile(this.config.tools, context?.vars) } : {}),
+      ...(allTools.length > 0 ? { tools: allTools } : {}),
       ...(systemInstruction ? { systemInstruction } : {}),
     };
     logger.debug(`Preparing to call Google Vertex API (Gemini) with body: ${JSON.stringify(body)}`);
@@ -380,7 +405,36 @@ export class VertexChatProvider extends VertexGenericProvider {
           cached: false,
           output,
           tokenUsage,
+          metadata: {},
         };
+
+        // Extract search grounding metadata from candidates
+        const candidateWithMetadata = dataWithResponse
+          .map((datum) => getCandidate(datum))
+          .find(
+            (candidate) =>
+              candidate.groundingMetadata ||
+              candidate.groundingChunks ||
+              candidate.groundingSupports ||
+              candidate.webSearchQueries,
+          );
+
+        if (candidateWithMetadata) {
+          response.metadata = {
+            ...(candidateWithMetadata.groundingMetadata && {
+              groundingMetadata: candidateWithMetadata.groundingMetadata,
+            }),
+            ...(candidateWithMetadata.groundingChunks && {
+              groundingChunks: candidateWithMetadata.groundingChunks,
+            }),
+            ...(candidateWithMetadata.groundingSupports && {
+              groundingSupports: candidateWithMetadata.groundingSupports,
+            }),
+            ...(candidateWithMetadata.webSearchQueries && {
+              webSearchQueries: candidateWithMetadata.webSearchQueries,
+            }),
+          };
+        }
 
         if (isCacheEnabled()) {
           await cache.set(cacheKey, JSON.stringify(response));
@@ -400,7 +454,8 @@ export class VertexChatProvider extends VertexGenericProvider {
           const functionName = structured_output.functionCall.name;
           if (this.config.functionToolCallbacks[functionName]) {
             try {
-              const functionResult = await this.config.functionToolCallbacks[functionName](
+              const functionResult = await this.executeFunctionCallback(
+                functionName,
                 JSON.stringify(
                   typeof structured_output.functionCall.args === 'string'
                     ? JSON.parse(structured_output.functionCall.args)
@@ -677,6 +732,107 @@ export class VertexChatProvider extends VertexGenericProvider {
       return {
         error: `Llama API response error: ${String(err)}. Response data: ${JSON.stringify(data)}`,
       };
+    }
+  }
+
+  async cleanup(): Promise<void> {
+    if (this.mcpClient) {
+      await this.initializationPromise;
+      await this.mcpClient.cleanup();
+      this.mcpClient = null;
+    }
+  }
+
+  /**
+   * Loads a function from an external file
+   * @param fileRef The file reference in the format 'file://path/to/file:functionName'
+   * @returns The loaded function
+   */
+  private async loadExternalFunction(fileRef: string): Promise<Function> {
+    let filePath = fileRef.slice('file://'.length);
+    let functionName: string | undefined;
+
+    if (filePath.includes(':')) {
+      const splits = filePath.split(':');
+      if (splits[0] && isJavascriptFile(splits[0])) {
+        [filePath, functionName] = splits;
+      }
+    }
+
+    try {
+      const resolvedPath = path.resolve(cliState.basePath || '', filePath);
+      logger.debug(
+        `Loading function from ${resolvedPath}${functionName ? `:${functionName}` : ''}`,
+      );
+
+      const requiredModule = await importModule(resolvedPath, functionName);
+
+      if (typeof requiredModule === 'function') {
+        return requiredModule;
+      } else if (
+        requiredModule &&
+        typeof requiredModule === 'object' &&
+        functionName &&
+        functionName in requiredModule
+      ) {
+        const fn = requiredModule[functionName];
+        if (typeof fn === 'function') {
+          return fn;
+        }
+      }
+
+      throw new Error(
+        `Function callback malformed: ${filePath} must export ${
+          functionName
+            ? `a named function '${functionName}'`
+            : 'a function or have a default export as a function'
+        }`,
+      );
+    } catch (error: any) {
+      throw new Error(`Error loading function from ${filePath}: ${error.message || String(error)}`);
+    }
+  }
+
+  /**
+   * Executes a function callback with proper error handling
+   */
+  private async executeFunctionCallback(functionName: string, args: string): Promise<any> {
+    try {
+      // Check if we've already loaded this function
+      let callback = this.loadedFunctionCallbacks[functionName];
+
+      // If not loaded yet, try to load it now
+      if (!callback) {
+        const callbackRef = this.config.functionToolCallbacks?.[functionName];
+
+        if (callbackRef && typeof callbackRef === 'string') {
+          const callbackStr: string = callbackRef;
+          if (callbackStr.startsWith('file://')) {
+            callback = await this.loadExternalFunction(callbackStr);
+          } else {
+            callback = new Function('return ' + callbackStr)();
+          }
+
+          // Cache for future use
+          this.loadedFunctionCallbacks[functionName] = callback;
+        } else if (typeof callbackRef === 'function') {
+          callback = callbackRef;
+          this.loadedFunctionCallbacks[functionName] = callback;
+        }
+      }
+
+      if (!callback) {
+        throw new Error(`No callback found for function '${functionName}'`);
+      }
+
+      // Execute the callback
+      logger.debug(`Executing function '${functionName}' with args: ${args}`);
+      const result = await callback(args);
+
+      return result;
+    } catch (error: any) {
+      logger.error(`Error executing function '${functionName}': ${error.message || String(error)}`);
+      throw error; // Re-throw so caller can handle fallback behavior
     }
   }
 }

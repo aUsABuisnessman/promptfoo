@@ -1,13 +1,13 @@
 import compression from 'compression';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import type { Request, Response } from 'express';
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
 import { Server as SocketIOServer } from 'socket.io';
 import { fromError } from 'zod-validation-error';
-import { DEFAULT_PORT, VERSION } from '../constants';
+import { getDefaultPort, VERSION } from '../constants';
 import { setupSignalWatcher } from '../database/signal';
 import { getDirectory } from '../esm';
 import { cloudConfig } from '../globalConfig/cloud';
@@ -22,7 +22,6 @@ import { synthesizeFromTestSuite } from '../testCase/synthesis';
 import type { EvalSummary } from '../types';
 import { checkRemoteHealth } from '../util/apiHealth';
 import {
-  getLatestEval,
   getPrompts,
   getPromptsForTestCasesHash,
   getStandaloneEvals,
@@ -33,14 +32,45 @@ import invariant from '../util/invariant';
 import { BrowserBehavior, openBrowser } from '../util/server';
 import { configsRouter } from './routes/configs';
 import { evalRouter } from './routes/eval';
+import { modelAuditRouter } from './routes/modelAudit';
 import { providersRouter } from './routes/providers';
 import { redteamRouter } from './routes/redteam';
 import { userRouter } from './routes/user';
 
-dotenv.config();
-
 // Prompts cache
 let allPrompts: PromptWithMetadata[] | null = null;
+
+// JavaScript file extensions that need proper MIME type
+const JS_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+
+/**
+ * Middleware to set proper MIME types for JavaScript files.
+ * This is necessary because some browsers (especially Arc) enforce strict MIME type checking
+ * and will refuse to execute scripts with incorrect MIME types for security reasons.
+ */
+export function setJavaScriptMimeType(
+  req: Request,
+  res: Response,
+  next: express.NextFunction,
+): void {
+  const ext = path.extname(req.path);
+  if (JS_EXTENSIONS.has(ext)) {
+    res.setHeader('Content-Type', 'application/javascript');
+  }
+  next();
+}
+
+/**
+ * Handles server startup errors with proper logging and graceful shutdown.
+ */
+export function handleServerError(error: NodeJS.ErrnoException, port: number): void {
+  if (error.code === 'EADDRINUSE') {
+    logger.error(`Port ${port} is already in use. Do you have another Promptfoo instance running?`);
+  } else {
+    logger.error(`Failed to start server: ${error.message}`);
+  }
+  process.exit(1);
+}
 
 export function createApp() {
   const app = express();
@@ -182,6 +212,7 @@ export function createApp() {
   app.use('/api/redteam', redteamRouter);
   app.use('/api/user', userRouter);
   app.use('/api/configs', configsRouter);
+  app.use('/api/model-audit', modelAuditRouter);
 
   app.post('/api/telemetry', async (req: Request, res: Response): Promise<void> => {
     try {
@@ -194,7 +225,7 @@ export function createApp() {
         return;
       }
       const { event, properties } = result.data;
-      await telemetry.record(event, properties);
+      await telemetry.recordAndSend(event, properties);
       res.status(200).json({ success: true });
     } catch (error) {
       logger.error(`Error processing telemetry request: ${error}`);
@@ -206,26 +237,20 @@ export function createApp() {
   // overwrite dynamic routes.
 
   // Configure proper MIME types for JavaScript files
-  // This is necessary because some browsers (especially Arc) enforce strict MIME type checking
-  // and will refuse to execute scripts with incorrect MIME types for security reasons
-  express.static.mime.define({
-    'application/javascript': ['js', 'mjs', 'cjs'],
-    'text/javascript': ['js', 'mjs', 'cjs'],
-  });
+  app.use(setJavaScriptMimeType);
 
   app.use(express.static(staticDir));
 
   // Handle client routing, return all requests to the app
-  app.get('*', (req: Request, res: Response): void => {
+  app.get('/*splat', (req: Request, res: Response): void => {
     res.sendFile(path.join(staticDir, 'index.html'));
   });
   return app;
 }
 
 export async function startServer(
-  port = DEFAULT_PORT,
-  browserBehavior = BrowserBehavior.ASK,
-  filterDescription?: string,
+  port = getDefaultPort(),
+  browserBehavior: BrowserBehavior = BrowserBehavior.ASK,
 ) {
   const app = createApp();
 
@@ -239,8 +264,10 @@ export async function startServer(
   await runDbMigrations();
 
   setupSignalWatcher(async () => {
-    const latestEval = await getLatestEval(filterDescription);
-    if ((latestEval?.results.results.length || 0) > 0) {
+    const latestEval = await Eval.latest();
+    const results = await latestEval?.getResultsCount();
+
+    if (results && results > 0) {
       logger.info(`Emitting update with eval ID: ${latestEval?.config?.description || 'unknown'}`);
       io.emit('update', latestEval);
       allPrompts = null;
@@ -248,7 +275,7 @@ export async function startServer(
   });
 
   io.on('connection', async (socket) => {
-    socket.emit('init', await getLatestEval(filterDescription));
+    socket.emit('init', await Eval.latest());
   });
 
   httpServer
@@ -260,14 +287,6 @@ export async function startServer(
       });
     })
     .on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE') {
-        logger.error(
-          `Port ${port} is already in use. Do you have another Promptfoo instance running?`,
-        );
-        process.exit(1);
-      } else {
-        logger.error(`Failed to start server: ${error.message}`);
-        process.exit(1);
-      }
+      handleServerError(error, port);
     });
 }

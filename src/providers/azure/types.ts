@@ -1,5 +1,6 @@
 import type { AssistantCreationOptions, FunctionDefinition } from '@azure/openai-assistants';
 import type { EnvOverrides } from '../../types/env';
+import type { MCPConfig } from '../mcp/types';
 
 /**
  * Options for configuring retry behavior
@@ -39,6 +40,7 @@ export interface AzureCompletionOptions {
   apiKey?: string;
   apiKeyEnvar?: string;
   apiVersion?: string;
+  headers?: { [key: string]: string };
 
   // OpenAI params
   max_tokens?: number;
@@ -83,6 +85,7 @@ export interface AzureCompletionOptions {
   reasoning_effort?: 'low' | 'medium' | 'high';
 
   passthrough?: object;
+  mcp?: MCPConfig;
 }
 
 export interface AzureModelCost {
@@ -99,7 +102,10 @@ export type AzureAssistantOptions = AzureCompletionOptions &
      * If set, automatically call these functions when the assistant activates
      * these function tools.
      */
-    functionToolCallbacks?: Record<FunctionDefinition['name'], (arg: string) => Promise<string>>;
+    functionToolCallbacks?: Record<
+      FunctionDefinition['name'],
+      ((arg: string) => Promise<string>) | string
+    >;
     /**
      * Model to use for the assistant.
      */

@@ -7,15 +7,15 @@ import useApiConfig from '@app/stores/apiConfig';
 import { callApi } from '@app/utils/api';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
-import type { SharedResults, ResultLightweightWithLabel, ResultsFile } from '@promptfoo/types';
+import type { SharedResults, ResultLightweightWithLabel } from '@promptfoo/types';
 import { io as SocketIOClient } from 'socket.io-client';
 import EmptyState from './EmptyState';
 import ResultsView from './ResultsView';
-import { useResultsViewSettingsStore, useStore } from './store';
+import { useResultsViewSettingsStore, useTableStore } from './store';
 import './Eval.css';
 
 interface EvalOptions {
-  fetchId?: string;
+  fetchId: string | null;
   preloadedData?: SharedResults;
   recentEvals?: ResultLightweightWithLabel[];
   defaultEvalId?: string;
@@ -32,16 +32,16 @@ export default function Eval({
 
   const {
     table,
-    setTable,
     setTableFromResultsFile,
     config,
     setConfig,
     evalId,
     setEvalId,
     setAuthor,
-  } = useStore();
+    fetchEvalData,
+  } = useTableStore();
 
-  const { setInComparisonMode } = useResultsViewSettingsStore();
+  const { setInComparisonMode, setComparisonEvalIds } = useResultsViewSettingsStore();
 
   const [loaded, setLoaded] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
@@ -60,24 +60,28 @@ export default function Eval({
     return body.data;
   };
 
-  const fetchEvalById = React.useCallback(
+  const loadEvalById = React.useCallback(
     async (id: string) => {
-      const resp = await callApi(`/results/${id}`, { cache: 'no-store' });
-      if (!resp.ok) {
-        setFailed(true);
-        return;
-      }
-      const body = (await resp.json()) as { data: ResultsFile };
+      try {
+        setEvalId(id);
 
-      setTableFromResultsFile(body.data);
-      setConfig(body.data.config);
-      setAuthor(body.data.author);
-      setEvalId(id);
+        const data = await fetchEvalData(id, { skipSettingEvalId: true });
+
+        if (!data) {
+          setFailed(true);
+          return false;
+        }
+        return true;
+      } catch (error) {
+        console.error('Error loading eval:', error);
+        setFailed(true);
+        return false;
+      }
     },
-    [setTable, setConfig, setEvalId, setAuthor],
+    [fetchEvalData, setFailed, setEvalId],
   );
+
   const [searchParams] = useSearchParams();
-  const searchEvalId = searchParams.get('evalId');
 
   const handleRecentEvalSelection = useCallback(
     async (id: string) => {
@@ -94,15 +98,16 @@ export default function Eval({
   );
 
   React.useEffect(() => {
-    const evalId = searchEvalId || fetchId;
-    if (evalId) {
-      console.log('Eval init: Fetching eval by id', { searchEvalId, fetchId });
+    if (fetchId) {
+      console.log('Eval init: Fetching eval by id', { fetchId });
       const run = async () => {
-        await fetchEvalById(evalId);
-        setLoaded(true);
-        setDefaultEvalId(evalId);
-        // Load other recent eval runs
-        fetchRecentFileEvals();
+        const success = await loadEvalById(fetchId);
+        if (success) {
+          setLoaded(true);
+          setDefaultEvalId(fetchId);
+          // Load other recent eval runs
+          fetchRecentFileEvals();
+        }
       };
       run();
     } else if (preloadedData) {
@@ -127,6 +132,7 @@ export default function Eval({
             setDefaultEvalId(newRecentEvals[0]?.evalId);
             setEvalId(newRecentEvals[0]?.evalId);
             console.log('setting default eval id', newRecentEvals[0]?.evalId);
+            loadEvalById(newRecentEvals[0]?.evalId);
           }
         });
       });
@@ -142,6 +148,7 @@ export default function Eval({
             if (newId) {
               setDefaultEvalId(newId);
               setEvalId(newId);
+              loadEvalById(newId);
             }
           }
         });
@@ -157,14 +164,11 @@ export default function Eval({
         const evals = await fetchRecentFileEvals();
         if (evals && evals.length > 0) {
           const defaultEvalId = evals[0].evalId;
-          const resp = await callApi(`/results/${defaultEvalId}`);
-          const body = await resp.json();
-          setTableFromResultsFile(body.data);
-          setConfig(body.data.config);
-          setAuthor(body.data.author || null);
-          setLoaded(true);
-          setDefaultEvalId(defaultEvalId);
-          setEvalId(defaultEvalId);
+          const success = await loadEvalById(defaultEvalId);
+          if (success) {
+            setLoaded(true);
+            setDefaultEvalId(defaultEvalId);
+          }
         } else {
           return (
             <div className="notice">
@@ -175,19 +179,21 @@ export default function Eval({
       };
       run();
     }
+    console.log('Eval init: Resetting comparison mode');
     setInComparisonMode(false);
+    setComparisonEvalIds([]);
   }, [
     apiBaseUrl,
     fetchId,
-    setTable,
+    loadEvalById,
+    setTableFromResultsFile,
     setConfig,
     setAuthor,
     setEvalId,
-    fetchEvalById,
-    preloadedData,
     setDefaultEvalId,
-    searchEvalId,
     setInComparisonMode,
+    setComparisonEvalIds,
+    preloadedData,
   ]);
 
   React.useEffect(() => {

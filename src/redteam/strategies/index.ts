@@ -5,7 +5,7 @@ import cliState from '../../cliState';
 import { importModule } from '../../esm';
 import logger from '../../logger';
 import type { RedteamStrategyObject, TestCase, TestCaseWithPlugin } from '../../types';
-import { isJavascriptFile } from '../../util/file';
+import { isJavascriptFile } from '../../util/fileExtensions';
 import { addBase64Encoding } from './base64';
 import { addBestOfNTestCases } from './bestOfN';
 import { addCitationTestCases } from './citation';
@@ -26,6 +26,7 @@ import { addRetryTestCases } from './retry';
 import { addRot13 } from './rot13';
 import { addAudioToBase64 } from './simpleAudio';
 import { addImageToBase64 } from './simpleImage';
+import { addVideoToBase64 } from './simpleVideo';
 import { addCompositeTestCases } from './singleTurnComposite';
 
 export interface Strategy {
@@ -165,10 +166,19 @@ export const Strategies: Strategy[] = [
   },
   {
     id: 'audio',
-    action: async (testCases, injectVar) => {
+    action: async (testCases, injectVar, config) => {
       logger.debug(`Adding audio encoding to ${testCases.length} test cases`);
-      const newTestCases = await addAudioToBase64(testCases, injectVar);
+      const newTestCases = await addAudioToBase64(testCases, injectVar, config);
       logger.debug(`Added ${newTestCases.length} audio encoded test cases`);
+      return newTestCases;
+    },
+  },
+  {
+    id: 'video',
+    action: async (testCases, injectVar) => {
+      logger.debug(`Adding video encoding to ${testCases.length} test cases`);
+      const newTestCases = await addVideoToBase64(testCases, injectVar);
+      logger.debug(`Added ${newTestCases.length} video encoded test cases`);
       return newTestCases;
     },
   },
@@ -250,6 +260,24 @@ export const Strategies: Strategy[] = [
       logger.debug(`Adding Pig Latin encoding to ${testCases.length} test cases`);
       const newTestCases = addOtherEncodings(testCases, injectVar, EncodingType.PIG_LATIN);
       logger.debug(`Added ${newTestCases.length} Pig Latin encoded test cases`);
+      return newTestCases;
+    },
+  },
+  {
+    id: 'camelcase',
+    action: async (testCases, injectVar) => {
+      logger.debug(`Adding camelCase encoding to ${testCases.length} test cases`);
+      const newTestCases = addOtherEncodings(testCases, injectVar, EncodingType.CAMEL_CASE);
+      logger.debug(`Added ${newTestCases.length} camelCase encoded test cases`);
+      return newTestCases;
+    },
+  },
+  {
+    id: 'emoji',
+    action: async (testCases, injectVar) => {
+      logger.debug(`Adding emoji encoding to ${testCases.length} test cases`);
+      const newTestCases = addOtherEncodings(testCases, injectVar, EncodingType.EMOJI);
+      logger.debug(`Added ${newTestCases.length} emoji encoded test cases`);
       return newTestCases;
     },
   },

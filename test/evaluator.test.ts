@@ -1,28 +1,83 @@
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 import glob from 'glob';
-import { evaluate, generateVarCombinations, isAllowedPrompt, runEval } from '../src/evaluator';
+import { FILE_METADATA_KEY } from '../src/constants';
+import {
+  calculateThreadsPerBar,
+  evaluate,
+  generateVarCombinations,
+  isAllowedPrompt,
+  newTokenUsage,
+  runEval,
+} from '../src/evaluator';
 import { runExtensionHook } from '../src/evaluatorHelpers';
 import logger from '../src/logger';
 import { runDbMigrations } from '../src/migrate';
 import Eval from '../src/models/eval';
 import { type ApiProvider, type TestSuite, type Prompt, ResultFailureReason } from '../src/types';
+import { processConfigFileReferences } from '../src/util/fileReference';
 import { sleep } from '../src/util/time';
+
+jest.mock('../src/util/fileReference', () => ({
+  ...jest.requireActual('../src/util/fileReference'),
+  processConfigFileReferences: jest.fn().mockImplementation(async (config) => {
+    if (
+      typeof config === 'object' &&
+      config !== null &&
+      config.tests &&
+      Array.isArray(config.tests)
+    ) {
+      const result = {
+        ...config,
+        tests: config.tests.map((test: any) => {
+          return {
+            ...test,
+            vars:
+              test.vars.var1 === 'file://test/fixtures/test_file.txt'
+                ? {
+                    var1: '<h1>Sample Report</h1><p>This is a test report with some data for the year 2023.</p>',
+                  }
+                : test.vars,
+          };
+        }),
+      };
+      return result;
+    }
+    return config;
+  }),
+}));
 
 jest.mock('proxy-agent', () => ({
   ProxyAgent: jest.fn().mockImplementation(() => ({})),
 }));
 jest.mock('glob', () => ({
-  globSync: jest.fn(),
+  globSync: jest.fn().mockImplementation((pattern) => {
+    if (pattern.includes('test/fixtures/test_file.txt')) {
+      return [pattern];
+    }
+    return [];
+  }),
 }));
 
 jest.mock('../src/esm');
+
 jest.mock('../src/evaluatorHelpers', () => ({
   ...jest.requireActual('../src/evaluatorHelpers'),
-  runExtensionHook: jest.fn(),
+  runExtensionHook: jest.fn().mockImplementation((extensions, hookName, context) => context),
 }));
+
 jest.mock('../src/util/time', () => ({
   ...jest.requireActual('../src/util/time'),
   sleep: jest.fn(),
+}));
+
+jest.mock('../src/util/fileExtensions', () => ({
+  isImageFile: jest
+    .fn()
+    .mockImplementation((filePath) => filePath.endsWith('.jpg') || filePath.endsWith('.png')),
+  isVideoFile: jest.fn().mockImplementation((filePath) => filePath.endsWith('.mp4')),
+  isAudioFile: jest.fn().mockImplementation((filePath) => filePath.endsWith('.mp3')),
+  isJavascriptFile: jest.fn().mockReturnValue(false),
 }));
 
 jest.mock('../src/util/functions/loadFunction', () => ({
@@ -102,6 +157,15 @@ describe('evaluator', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    if (global.gc) {
+      global.gc(); // Force garbage collection
+    }
+  });
+
+  afterAll(() => {
+    // Clear all module mocks to prevent any lingering state
+    jest.restoreAllMocks();
+    jest.resetModules();
   });
 
   it('evaluate with vars', async () => {
@@ -125,12 +189,8 @@ describe('evaluator', () => {
         vars: { var1: 'value1', var2: 'value2' },
         test: testSuite.tests![0],
         prompt: expect.any(Object),
-        filters: undefined,
-        originalProvider: mockApiProvider,
-        logger: expect.any(Object),
-        fetchWithCache: expect.any(Function),
-        getCache: expect.any(Function),
       }),
+      undefined,
     );
     expect(summary.stats.successes).toBe(1);
     expect(summary.stats.failures).toBe(0);
@@ -235,6 +295,62 @@ describe('evaluator', () => {
     expect(summary.results[0].prompt.raw).toBe('Test prompt value1 value2');
     expect(summary.results[0].prompt.label).toBe('Test prompt {{ var1.prop1 }} {{ var2 }}');
     expect(summary.results[0].response?.output).toBe('Test output');
+  });
+
+  it('evaluate with vars from file', async () => {
+    const originalReadFileSync = fs.readFileSync;
+    jest.spyOn(fs, 'readFileSync').mockImplementation((path) => {
+      if (typeof path === 'string' && path.includes('test_file.txt')) {
+        return '<h1>Sample Report</h1><p>This is a test report with some data for the year 2023.</p>';
+      }
+      return originalReadFileSync(path);
+    });
+
+    const evalHelpers = await import('../src/evaluatorHelpers');
+    const originalRenderPrompt = evalHelpers.renderPrompt;
+
+    const mockRenderPrompt = jest.spyOn(evalHelpers, 'renderPrompt');
+    mockRenderPrompt.mockImplementation(async (prompt, vars) => {
+      if (prompt.raw.includes('{{ var1 }}')) {
+        return 'Test prompt <h1>Sample Report</h1><p>This is a test report with some data for the year 2023.</p>';
+      }
+      return originalRenderPrompt(prompt, vars);
+    });
+
+    const testSuite: TestSuite = {
+      providers: [mockApiProvider],
+      prompts: [toPrompt('Test prompt {{ var1 }}')],
+      tests: [
+        {
+          vars: { var1: 'file://test/fixtures/test_file.txt' },
+        },
+      ],
+    };
+
+    try {
+      const processedTestSuite = await processConfigFileReferences(testSuite);
+      const evalRecord = await Eval.create({}, processedTestSuite.prompts, { id: randomUUID() });
+      await evaluate(processedTestSuite, evalRecord, {});
+      const summary = await evalRecord.toEvaluateSummary();
+
+      expect(mockApiProvider.callApi).toHaveBeenCalledTimes(1);
+      expect(mockApiProvider.callApi).toHaveBeenCalledWith(
+        'Test prompt <h1>Sample Report</h1><p>This is a test report with some data for the year 2023.</p>',
+        expect.anything(),
+        undefined,
+      );
+
+      expect(summary.stats.successes).toBe(1);
+      expect(summary.stats.failures).toBe(0);
+      expect(summary.results[0].prompt.raw).toBe(
+        'Test prompt <h1>Sample Report</h1><p>This is a test report with some data for the year 2023.</p>',
+      );
+      expect(summary.results[0].prompt.label).toBe('Test prompt {{ var1 }}');
+      expect(summary.results[0].response?.output).toBe('Test output');
+    } finally {
+      mockRenderPrompt.mockRestore();
+      fs.readFileSync = originalReadFileSync;
+    }
   });
 
   it('evaluate with named prompt', async () => {
@@ -1208,6 +1324,56 @@ describe('evaluator', () => {
     expect(mockApiProvider.callApi).toHaveBeenCalledTimes(2);
   });
 
+  it('evaluator should correctly count named scores based on contributing assertions', async () => {
+    const testSuite: TestSuite = {
+      providers: [mockApiProvider],
+      prompts: [toPrompt('Test prompt for namedScoresCount')],
+      tests: [
+        {
+          vars: { var1: 'value1' },
+          assert: [
+            {
+              type: 'equals',
+              value: 'Test output',
+              metric: 'Accuracy',
+            },
+            {
+              type: 'contains',
+              value: 'Test',
+              metric: 'Accuracy',
+            },
+            {
+              type: 'javascript',
+              value: 'output.length > 0',
+              metric: 'Completeness',
+            },
+          ],
+        },
+      ],
+    };
+    const evalRecord = await Eval.create({}, testSuite.prompts, { id: randomUUID() });
+    await evaluate(testSuite, evalRecord, {});
+    const summary = await evalRecord.toEvaluateSummary();
+
+    expect(summary.results).toHaveLength(1);
+    const result = summary.results[0];
+
+    // Use toMatchObject pattern to avoid conditional expects
+    expect(evalRecord.prompts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: result.provider.id,
+          metrics: expect.objectContaining({
+            namedScoresCount: expect.objectContaining({
+              Accuracy: 2,
+              Completeness: 1,
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
   it('merges metadata correctly for regular tests', async () => {
     const testSuite: TestSuite = {
       providers: [mockApiProvider],
@@ -1257,6 +1423,7 @@ describe('evaluator', () => {
     expect(results[0].metadata).toEqual({
       testKey: 'testValue',
       responseKey: 'responseValue',
+      [FILE_METADATA_KEY]: {},
     });
   });
 
@@ -1624,20 +1791,19 @@ describe('evaluator', () => {
               type: 'json_schema',
               json_schema: {
                 name: 'math_response',
-                strict: true,
                 schema: {
                   type: 'object',
-                  properties: {
-                    final_answer: { type: 'string' },
-                  },
+                  properties: { final_answer: { type: 'string' } },
                   required: ['final_answer'],
                   additionalProperties: false,
                 },
+                strict: true,
               },
             },
           },
         }),
       }),
+      undefined,
     );
   });
 
@@ -1725,6 +1891,7 @@ describe('evaluator', () => {
             }),
           }),
         ]),
+        results: expect.any(Array),
         suite: testSuite,
       }),
     );
@@ -1840,6 +2007,7 @@ describe('evaluator', () => {
       1,
       expect.stringContaining('User: Question 1A'),
       expect.anything(),
+      undefined,
     );
 
     // First conversation, second question (should include history)
@@ -1847,6 +2015,7 @@ describe('evaluator', () => {
       2,
       expect.stringContaining('User: Question 1A\nAssistant: Test output\nUser: Question 1B'),
       expect.anything(),
+      undefined,
     );
 
     // Second conversation, first question (should NOT include first conversation)
@@ -1854,6 +2023,7 @@ describe('evaluator', () => {
       3,
       expect.stringContaining('User: Question 2A'),
       expect.anything(),
+      undefined,
     );
 
     // Second conversation, second question (should only include second conversation history)
@@ -1861,6 +2031,7 @@ describe('evaluator', () => {
       4,
       expect.stringContaining('User: Question 2A\nAssistant: Test output\nUser: Question 2B'),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -2045,6 +2216,208 @@ describe('evaluator', () => {
     );
     expect(mockApiProviderWithError.callApi).toHaveBeenCalledTimes(1);
   });
+
+  it('should handle evaluation timeout', async () => {
+    const mockAddResult = jest.fn().mockResolvedValue(undefined);
+    let longTimer: NodeJS.Timeout | null = null;
+
+    const slowApiProvider: ApiProvider = {
+      id: jest.fn().mockReturnValue('slow-provider'),
+      callApi: jest.fn().mockImplementation(() => {
+        return new Promise((resolve) => {
+          longTimer = setTimeout(() => {
+            resolve({
+              output: 'Slow response',
+              tokenUsage: { total: 10, prompt: 5, completion: 5, cached: 0, numRequests: 1 },
+            });
+          }, 5000);
+        });
+      }),
+      cleanup: jest.fn(),
+    };
+
+    const mockEval = {
+      id: 'mock-eval-id',
+      results: [],
+      prompts: [],
+      persisted: false,
+      config: {},
+      addResult: mockAddResult,
+      addPrompts: jest.fn().mockResolvedValue(undefined),
+      fetchResultsByTestIdx: jest.fn().mockResolvedValue([]),
+      getResults: jest.fn().mockResolvedValue([]),
+      toEvaluateSummary: jest.fn().mockResolvedValue({
+        results: [],
+        prompts: [],
+        stats: {
+          successes: 0,
+          failures: 0,
+          errors: 1,
+          tokenUsage: newTokenUsage(),
+        },
+      }),
+      save: jest.fn().mockResolvedValue(undefined),
+      setVars: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const testSuite: TestSuite = {
+      providers: [slowApiProvider],
+      prompts: [toPrompt('Test prompt')],
+      tests: [{}],
+    };
+
+    try {
+      const evalPromise = evaluate(testSuite, mockEval as unknown as Eval, { timeoutMs: 100 });
+      await evalPromise;
+
+      expect(slowApiProvider.callApi).toHaveBeenCalledWith(
+        'Test prompt',
+        expect.anything(),
+        expect.objectContaining({
+          abortSignal: expect.any(AbortSignal),
+        }),
+      );
+
+      expect(mockAddResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.stringContaining('Evaluation timed out after 100ms'),
+          success: false,
+          failureReason: ResultFailureReason.ERROR,
+        }),
+      );
+
+      expect(slowApiProvider.cleanup).toHaveBeenCalledWith();
+    } finally {
+      if (longTimer) {
+        clearTimeout(longTimer);
+      }
+    }
+  });
+
+  it('should abort when exceeding maxEvalTimeMs', async () => {
+    const mockAddResult = jest.fn().mockResolvedValue(undefined);
+    let longTimer: NodeJS.Timeout | null = null;
+
+    const slowApiProvider: ApiProvider = {
+      id: jest.fn().mockReturnValue('slow-provider'),
+      callApi: jest.fn().mockImplementation((_, __, opts) => {
+        return new Promise((resolve, reject) => {
+          longTimer = setTimeout(() => {
+            resolve({
+              output: 'Slow response',
+              tokenUsage: { total: 0, prompt: 0, completion: 0, cached: 0, numRequests: 1 },
+            });
+          }, 1000);
+
+          opts?.abortSignal?.addEventListener('abort', () => {
+            if (longTimer) {
+              clearTimeout(longTimer);
+            }
+            reject(new Error('aborted'));
+          });
+        });
+      }),
+      cleanup: jest.fn(),
+    };
+
+    const mockEval = {
+      id: 'mock-eval-id',
+      results: [],
+      prompts: [],
+      persisted: false,
+      config: {},
+      addResult: mockAddResult,
+      addPrompts: jest.fn().mockResolvedValue(undefined),
+      fetchResultsByTestIdx: jest.fn().mockResolvedValue([]),
+      getResults: jest.fn().mockResolvedValue([]),
+      toEvaluateSummary: jest.fn().mockResolvedValue({
+        results: [],
+        prompts: [],
+        stats: {
+          successes: 0,
+          failures: 0,
+          errors: 2,
+          tokenUsage: newTokenUsage(),
+        },
+      }),
+      save: jest.fn().mockResolvedValue(undefined),
+      setVars: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const testSuite: TestSuite = {
+      providers: [slowApiProvider],
+      prompts: [toPrompt('Test prompt')],
+      tests: [{}, {}],
+    };
+
+    try {
+      const evalPromise = evaluate(testSuite, mockEval as unknown as Eval, { maxEvalTimeMs: 100 });
+      await evalPromise;
+
+      expect(mockAddResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.stringContaining('aborted'),
+          success: false,
+          failureReason: ResultFailureReason.ERROR,
+        }),
+      );
+    } finally {
+      if (longTimer) {
+        clearTimeout(longTimer);
+      }
+    }
+  });
+
+  it('should accumulate token usage correctly', async () => {
+    const mockOptions = {
+      delay: 0,
+      testIdx: 0,
+      promptIdx: 0,
+      repeatIndex: 0,
+      isRedteam: false,
+    };
+
+    const results = await runEval({
+      ...mockOptions,
+      provider: mockApiProvider,
+      prompt: { raw: 'Test prompt', label: 'test-label' },
+      test: {
+        assert: [
+          {
+            type: 'llm-rubric',
+            value: 'Test output',
+          },
+        ],
+        options: { provider: mockGradingApiProviderPasses },
+      },
+      conversations: {},
+      registers: {},
+    });
+
+    expect(results[0].tokenUsage).toEqual({
+      total: 20, // 10 from provider + 10 from assertion
+      prompt: 10, // 5 from provider + 5 from assertion
+      completion: 10, // 5 from provider + 5 from assertion
+      cached: 0,
+      completionDetails: {
+        reasoning: 0,
+        acceptedPrediction: 0,
+        rejectedPrediction: 0,
+      },
+      numRequests: 2, // 1 from provider + 1 from assertion
+      assertions: {
+        total: 0,
+        prompt: 0,
+        completion: 0,
+        cached: 0,
+        completionDetails: {
+          reasoning: 0,
+          acceptedPrediction: 0,
+          rejectedPrediction: 0,
+        },
+      },
+    });
+  });
 });
 
 describe('generateVarCombinations', () => {
@@ -2128,7 +2501,6 @@ describe('isAllowedPrompt', () => {
     expect(isAllowedPrompt(prompt3, ['group1', 'prompt2'])).toBe(false);
   });
 
-  // TODO: What should the expected behavior of this test be?
   it('should return false if allowedPrompts is an empty array', () => {
     expect(isAllowedPrompt(prompt1, [])).toBe(false);
   });
@@ -2168,7 +2540,7 @@ describe('runEval', () => {
     expect(result.success).toBe(true);
     expect(result.response?.output).toBe('Test output');
     expect(result.prompt.label).toBe('test-label');
-    expect(mockProvider.callApi).toHaveBeenCalledWith('Test prompt', expect.anything());
+    expect(mockProvider.callApi).toHaveBeenCalledWith('Test prompt', expect.anything(), undefined);
   });
 
   it('should handle conversation history', async () => {
@@ -2222,7 +2594,11 @@ describe('runEval', () => {
     });
     const result = results[0];
     expect(result.success).toBe(true);
-    expect(mockProvider.callApi).toHaveBeenCalledWith('Using stored data', expect.anything());
+    expect(mockProvider.callApi).toHaveBeenCalledWith(
+      'Using stored data',
+      expect.anything(),
+      undefined,
+    );
   });
 
   it('should store output in register when specified', async () => {
@@ -2357,23 +2733,66 @@ describe('runEval', () => {
       prompt: 10, // 5 from provider + 5 from assertion
       completion: 10, // 5 from provider + 5 from assertion
       cached: 0,
-      numRequests: 2, // 1 for provider + 1 for assertion
       completionDetails: {
         reasoning: 0,
         acceptedPrediction: 0,
         rejectedPrediction: 0,
       },
+      numRequests: 2, // 1 from provider + 1 from assertion
       assertions: {
         total: 0,
         prompt: 0,
         completion: 0,
         cached: 0,
         completionDetails: {
-          acceptedPrediction: 0,
           reasoning: 0,
+          acceptedPrediction: 0,
           rejectedPrediction: 0,
         },
       },
     });
+  });
+});
+
+describe('calculateThreadsPerBar', () => {
+  it('should evenly distribute threads when concurrency is a multiple of numProgressBars', () => {
+    // 10 threads, 5 progress bars = 2 threads per bar
+    expect(calculateThreadsPerBar(10, 5, 0)).toBe(2);
+    expect(calculateThreadsPerBar(10, 5, 1)).toBe(2);
+    expect(calculateThreadsPerBar(10, 5, 4)).toBe(2);
+
+    // 12 threads, 6 progress bars = 2 threads per bar
+    expect(calculateThreadsPerBar(12, 6, 0)).toBe(2);
+    expect(calculateThreadsPerBar(12, 6, 5)).toBe(2);
+  });
+
+  it('should correctly distribute extra threads for the first N bars', () => {
+    // 11 threads, 5 progress bars = 2 threads for first bar, 2 for the rest
+    // floor(11/5) = 2 with 1 extra thread
+    expect(calculateThreadsPerBar(11, 5, 0)).toBe(3); // First bar gets 2+1
+    expect(calculateThreadsPerBar(11, 5, 1)).toBe(2);
+    expect(calculateThreadsPerBar(11, 5, 4)).toBe(2);
+
+    // 17 threads, 6 progress bars = 2 threads for first 5 bars, 2 for the last
+    // floor(17/6) = 2 with 5 extra threads
+    expect(calculateThreadsPerBar(17, 6, 0)).toBe(3); // First bar gets 2+1
+    expect(calculateThreadsPerBar(17, 6, 4)).toBe(3); // Fifth bar gets 2+1
+    expect(calculateThreadsPerBar(17, 6, 5)).toBe(2); // Last bar gets just 2
+  });
+
+  it('should handle edge cases', () => {
+    // 1 thread, 1 progress bar
+    expect(calculateThreadsPerBar(1, 1, 0)).toBe(1);
+
+    // More progress bars than threads (1 thread per bar until we run out)
+    expect(calculateThreadsPerBar(3, 5, 0)).toBe(1);
+    expect(calculateThreadsPerBar(3, 5, 1)).toBe(1);
+    expect(calculateThreadsPerBar(3, 5, 2)).toBe(1);
+    expect(calculateThreadsPerBar(3, 5, 3)).toBe(0);
+    expect(calculateThreadsPerBar(3, 5, 4)).toBe(0);
+
+    // Large numbers
+    expect(calculateThreadsPerBar(101, 20, 0)).toBe(6); // 5 with 1 extra
+    expect(calculateThreadsPerBar(101, 20, 19)).toBe(5); // Last bar gets no extra
   });
 });
