@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import CrispChat from '@app/components/CrispChat';
 import ErrorBoundary from '@app/components/ErrorBoundary';
+import { usePageMeta } from '@app/hooks/usePageMeta';
 import { useTelemetry } from '@app/hooks/useTelemetry';
 import { useToast } from '@app/hooks/useToast';
 import { callApi } from '@app/utils/api';
@@ -28,6 +29,7 @@ import Tabs from '@mui/material/Tabs';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { styled } from '@mui/material/styles';
+import { REDTEAM_DEFAULTS } from '@promptfoo/redteam/constants';
 import type { RedteamStrategy } from '@promptfoo/types';
 import { ProviderOptionsSchema } from '@promptfoo/validators/providers';
 import yaml from 'js-yaml';
@@ -252,6 +254,7 @@ const StatusSection = styled(Box)(({ theme }) => ({
 
 export default function RedTeamSetupPage() {
   // --- Hooks ---
+  usePageMeta({ title: 'Red team setup', description: 'Configure red team testing' });
   const location = useLocation();
   const navigate = useNavigate();
   const { recordEvent } = useTelemetry();
@@ -280,6 +283,15 @@ export default function RedTeamSetupPage() {
   const [configDate, setConfigDate] = useState<string | null>(null);
 
   const lastSavedConfig = useRef<string>('');
+
+  // Track funnel on initial load
+  useEffect(() => {
+    recordEvent('funnel', {
+      type: 'redteam',
+      step: 'webui_setup_started',
+      source: 'webui',
+    });
+  }, []);
 
   // Handle browser back/forward
   useEffect(() => {
@@ -324,6 +336,16 @@ export default function RedTeamSetupPage() {
     updateHash(newValue);
     setValue(newValue);
     window.scrollTo({ top: 0 });
+
+    // Track funnel progress
+    const steps = ['targets', 'purpose', 'plugins', 'strategies', 'review'];
+    if (newValue < steps.length) {
+      recordEvent('funnel', {
+        type: 'redteam',
+        step: `webui_setup_${steps[newValue]}_viewed`,
+        source: 'webui',
+      });
+    }
   };
 
   const closeSetupModal = () => {
@@ -338,6 +360,17 @@ export default function RedTeamSetupPage() {
       numStrategies: config.strategies.length,
       targetType: config.target.id,
     });
+
+    // Track funnel milestone
+    recordEvent('funnel', {
+      type: 'redteam',
+      step: 'webui_setup_configured',
+      source: 'webui',
+      numPlugins: config.plugins.length,
+      numStrategies: config.strategies.length,
+      targetType: config.target.id,
+    });
+
     try {
       const response = await callApi('/configs', {
         method: 'POST',
@@ -472,6 +505,8 @@ export default function RedTeamSetupPage() {
         strategies,
         purpose: yamlConfig.redteam?.purpose || '',
         entities: yamlConfig.redteam?.entities || [],
+        numTests: yamlConfig.redteam?.numTests || REDTEAM_DEFAULTS.NUM_TESTS,
+        maxConcurrency: yamlConfig.redteam?.maxConcurrency || REDTEAM_DEFAULTS.MAX_CONCURRENCY,
         applicationDefinition: {
           purpose: yamlConfig.redteam?.purpose || '',
           // We could potentially parse these from redteam.purpose if it follows a specific format.

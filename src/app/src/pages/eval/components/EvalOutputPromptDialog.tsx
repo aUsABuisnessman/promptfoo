@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import type React from 'react';
+import { useState, useEffect } from 'react';
+import { ErrorBoundary } from 'react-error-boundary';
 import CheckIcon from '@mui/icons-material/Check';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
@@ -18,6 +21,7 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
 import { ellipsize } from '../../../../../util/text';
+import TraceView from '../../../components/traces/TraceView';
 import ChatMessages, { type Message } from './ChatMessages';
 import Citations from './Citations';
 import type { GradingResult } from './types';
@@ -48,6 +52,33 @@ const textContentTypographySx = {
   wordBreak: 'break-word',
 };
 
+/**
+ * Returns the value of the assertion.
+ * For context-related assertions, read the context value from metadata, if it exists.
+ * Otherwise, return the assertion value.
+ * @param result - The grading result.
+ * @returns The value of the assertion.
+ */
+function getValue(result: GradingResult) {
+  // For context-related assertions, read the context value from metadata, if it exists
+  if (
+    result.assertion?.type &&
+    ['context-faithfulness', 'context-recall', 'context-relevance'].includes(
+      result.assertion.type,
+    ) &&
+    result.metadata?.context
+  ) {
+    return result.metadata?.context;
+  }
+
+  // Otherwise, return the assertion value
+  return result.assertion?.value
+    ? typeof result.assertion.value === 'object'
+      ? JSON.stringify(result.assertion.value, null, 2)
+      : String(result.assertion.value)
+    : '-';
+}
+
 // Code display component
 interface CodeDisplayProps {
   content: string;
@@ -72,7 +103,7 @@ function CodeDisplay({
 }: CodeDisplayProps) {
   // Improved code detection logic
   const isCode =
-    /^[\s]*[{\[]/.test(content) || // JSON-like (starts with { or [)
+    /^[\s]*[{[]/.test(content) || // JSON-like (starts with { or [)
     /^#\s/.test(content) || // Markdown headers (starts with # )
     /```/.test(content) || // Code blocks (contains ```)
     /^\s*[\w-]+\s*:/.test(content) || // YAML/config-like (key: value)
@@ -192,11 +223,8 @@ function AssertionResults({ gradingResults }: { gradingResults?: GradingResult[]
               if (!result) {
                 return null;
               }
-              const value = result.assertion?.value
-                ? typeof result.assertion.value === 'object'
-                  ? JSON.stringify(result.assertion.value, null, 2)
-                  : String(result.assertion.value)
-                : '-';
+
+              const value = getValue(result);
               const truncatedValue = ellipsize(value, 300);
               const isExpanded = expandedValues[i] || false;
               const valueKey = `value-${i}`;
@@ -279,6 +307,8 @@ interface EvalOutputPromptDialogProps {
   output?: string;
   gradingResults?: GradingResult[];
   metadata?: Record<string, any>;
+  evaluationId?: string;
+  testCaseId?: string;
 }
 
 // URL detection function
@@ -299,6 +329,8 @@ export default function EvalOutputPromptDialog({
   output,
   gradingResults,
   metadata,
+  evaluationId,
+  testCaseId,
 }: EvalOutputPromptDialogProps) {
   const [copied, setCopied] = useState(false);
   const [copiedFields, setCopiedFields] = useState<{ [key: string]: boolean }>({});
@@ -333,7 +365,7 @@ export default function EvalOutputPromptDialog({
     setExpandedMetadata((prev: ExpandedMetadataState) => ({
       ...prev,
       [key]: {
-        expanded: isDoubleClick ? false : true,
+        expanded: !isDoubleClick,
         lastClickTime: now,
       },
     }));
@@ -384,9 +416,19 @@ export default function EvalOutputPromptDialog({
             showCopyButton={hoveredElement === 'output' || copiedFields['output']}
           />
         )}
-        {citationsData && <Citations citations={citationsData} />}
         <AssertionResults gradingResults={gradingResults} />
         {parsedMessages && parsedMessages.length > 0 && <ChatMessages messages={parsedMessages} />}
+        {evaluationId && (
+          <Box mt={2}>
+            <Typography variant="subtitle1" sx={subtitleTypographySx}>
+              Trace Timeline
+            </Typography>
+            <ErrorBoundary fallback={<Alert severity="error">Error loading traces</Alert>}>
+              <TraceView evaluationId={evaluationId} testCaseId={testCaseId} />
+            </ErrorBoundary>
+          </Box>
+        )}
+        {citationsData && <Citations citations={citationsData} />}
         {metadata && Object.keys(metadata).filter((key) => key !== 'citations').length > 0 && (
           <Box my={2}>
             <Typography variant="subtitle1" sx={subtitleTypographySx}>

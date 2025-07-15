@@ -170,7 +170,7 @@ async function getModelSpecs(): Promise<WatsonXModel[]> {
   return modelSpecsCache;
 }
 
-export async function calculateWatsonXCost(
+async function calculateWatsonXCost(
   modelName: string,
   config: any,
   promptTokens?: number,
@@ -309,7 +309,7 @@ export class WatsonXProvider implements ApiProvider {
       serviceUrl: this.options.config.serviceUrl || 'https://us-south.ml.cloud.ibm.com',
       authenticator,
     });
-    return this.client;
+    return this.client!;
   }
 
   async callApi(prompt: string): Promise<ProviderResponse> {

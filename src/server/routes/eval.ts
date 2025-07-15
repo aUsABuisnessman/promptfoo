@@ -197,7 +197,7 @@ evalRouter.get('/:id/table', async (req: Request, res: Response): Promise<void> 
   let returnTable = { head: table.head, body: table.body };
 
   if (comparisonEvalIds.length > 0) {
-    console.log('comparisonEvalIds', comparisonEvalIds);
+    logger.debug(`Comparison eval IDs: ${JSON.stringify(comparisonEvalIds)}`);
     const comparisonEvals = await Promise.all(
       comparisonEvalIds.map(async (comparisonEvalId) => {
         const comparisonEval_ = await Eval.findById(comparisonEvalId as string);
@@ -380,6 +380,7 @@ evalRouter.post('/', async (req: Request, res: Response): Promise<void> => {
         author: incEval.author,
         createdAt: new Date(incEval.createdAt),
         results: incEval.results,
+        vars: incEval.vars,
       });
       if (incEval.prompts) {
         eval_.addPrompts(incEval.prompts);

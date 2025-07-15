@@ -135,7 +135,7 @@ def call_api(prompt, options, context):
 `;
 
 function recordOnboardingStep(step: string, properties: EventProperties = {}) {
-  telemetry.recordAndSend('funnel', {
+  telemetry.record('funnel', {
     type: 'redteam onboarding',
     step,
     ...properties,
@@ -324,7 +324,10 @@ export async function redteamInit(directory: string | undefined) {
         name: 'anthropic:claude-3-7-sonnet-20250219',
         value: 'anthropic:messages:claude-3-7-sonnet-20250219',
       },
-      { name: 'vertex:gemini-2.5-pro-preview-03-25', value: 'vertex:gemini-2.5-pro-preview-03-25' },
+      {
+        name: 'Google Vertex Gemini 2.5 Pro',
+        value: 'vertex:gemini-2.5-pro',
+      },
     ];
 
     const selectedProvider = await select({

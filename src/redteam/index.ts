@@ -14,6 +14,7 @@ import { extractVariablesFromTemplates } from '../util/templates';
 import type { StrategyExemptPlugin } from './constants';
 import {
   ALIASED_PLUGIN_MAPPINGS,
+  BIAS_PLUGINS,
   FOUNDATION_PLUGINS,
   HARM_PLUGINS,
   PII_PLUGINS,
@@ -145,7 +146,7 @@ export function resolvePluginConfig(config: Record<string, any> | undefined): Re
 const categories = {
   foundation: FOUNDATION_PLUGINS,
   harmful: Object.keys(HARM_PLUGINS),
-  bias: Object.keys(HARM_PLUGINS).filter((p) => p.startsWith('bias:')),
+  bias: BIAS_PLUGINS,
   pii: PII_PLUGINS,
 } as const;
 
@@ -262,7 +263,9 @@ async function applyStrategies(
       const loadedStrategy = await loadStrategy(strategy.id);
       strategyAction = loadedStrategy.action;
     } else {
-      const builtinStrategy = Strategies.find((s) => s.id === strategy.id);
+      // Handle custom strategy variants (e.g., custom:aggressive)
+      const baseStrategyId = strategy.id.includes(':') ? strategy.id.split(':')[0] : strategy.id;
+      const builtinStrategy = Strategies.find((s) => s.id === baseStrategyId);
       if (!builtinStrategy) {
         logger.warn(`Strategy ${strategy.id} not registered, skipping`);
         continue;
@@ -275,10 +278,15 @@ async function applyStrategies(
       pluginMatchesStrategyTargets(t, strategy.id, targetPlugins),
     );
 
-    const strategyTestCases: TestCase[] = await strategyAction(applicableTestCases, injectVar, {
-      ...(strategy.config || {}),
-      excludeTargetOutputFromAgenticAttackGeneration,
-    });
+    const strategyTestCases: TestCase[] = await strategyAction(
+      applicableTestCases,
+      injectVar,
+      {
+        ...(strategy.config || {}),
+        excludeTargetOutputFromAgenticAttackGeneration,
+      },
+      strategy.id,
+    );
 
     newTestCases.push(
       ...strategyTestCases

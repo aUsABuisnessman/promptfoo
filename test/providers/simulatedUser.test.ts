@@ -78,9 +78,7 @@ describe('SimulatedUser', () => {
       expect(result.output).toContain('User:');
       expect(result.output).toContain('Assistant:');
       expect(result.tokenUsage?.numRequests).toBe(2);
-      expect(originalProvider.callApi).toHaveBeenCalledWith(
-        expect.stringContaining('[{"role":"system","content":"test prompt"}'),
-      );
+      expect(originalProvider.callApi).toHaveBeenCalledTimes(2);
       expect(timeUtils.sleep).not.toHaveBeenCalled();
     });
 
@@ -100,9 +98,7 @@ describe('SimulatedUser', () => {
 
       const messageCount = result.output?.split('---').length;
       expect(messageCount).toBe(2);
-      expect(originalProvider.callApi).toHaveBeenCalledWith(
-        expect.stringContaining('[{"role":"system","content":"test prompt"}'),
-      );
+      expect(originalProvider.callApi).toHaveBeenCalledTimes(1);
       expect(timeUtils.sleep).not.toHaveBeenCalled();
     });
 
@@ -141,6 +137,32 @@ describe('SimulatedUser', () => {
       ).rejects.toThrow('Expected originalProvider to be set');
     });
 
+    it('should pass context with vars to the target provider', async () => {
+      const testContext = {
+        originalProvider,
+        vars: {
+          workflow_id: '123-workflow',
+          session_id: '123-session',
+          instructions: 'test instructions',
+        },
+        prompt: { raw: 'test', display: 'test', label: 'test' },
+      };
+
+      const result = await simulatedUser.callApi('test prompt', testContext);
+
+      expect(result.output).toBeDefined();
+      expect(originalProvider.callApi).toHaveBeenCalledWith(
+        expect.stringContaining('[{"role":"user","content":"user response"}'),
+        expect.objectContaining({
+          vars: expect.objectContaining({
+            workflow_id: '123-workflow',
+            session_id: '123-session',
+            instructions: 'test instructions',
+          }),
+        }),
+      );
+    });
+
     it('should handle provider delay', async () => {
       const providerWithDelay = {
         ...originalProvider,
@@ -158,9 +180,7 @@ describe('SimulatedUser', () => {
       );
 
       expect(result.output).toBeDefined();
-      expect(providerWithDelay.callApi).toHaveBeenCalledWith(
-        expect.stringContaining('[{"role":"system","content":"test prompt"}'),
-      );
+      expect(providerWithDelay.callApi).toHaveBeenCalledTimes(2);
       expect(timeUtils.sleep).toHaveBeenCalledWith(100);
     });
   });

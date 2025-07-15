@@ -115,7 +115,6 @@ export async function doEval(
       // Only set when redteam is enabled for sure, because we don't know if config is loaded yet
       ...(Boolean(config?.redteam) && { isRedteam: true }),
     });
-    await telemetry.send();
 
     if (cmdObj.write) {
       await runDbMigrations();
@@ -169,6 +168,21 @@ export async function doEval(
         Did you mean to run ${chalk.bold('promptfoo redteam generate')} instead?
         `),
       );
+    }
+
+    // TODO(faizan): Crazy condition to see when we run the example redteam config.
+    // Remove this once we have a better way to track this.
+    if (
+      config.redteam &&
+      Array.isArray(config.providers) &&
+      config.providers.length > 0 &&
+      typeof config.providers[0] === 'object' &&
+      config.providers[0].id === 'http' &&
+      config.providers[0].config.url.includes('promptfoo.app')
+    ) {
+      telemetry.record('feature_used', {
+        feature: 'redteam_run_with_example',
+      });
     }
 
     // Ensure evaluateOptions from the config file are applied
@@ -226,11 +240,17 @@ export async function doEval(
     };
 
     if (cmdObj.grader) {
+      if (typeof testSuite.defaultTest === 'string') {
+        testSuite.defaultTest = {};
+      }
       testSuite.defaultTest = testSuite.defaultTest || {};
       testSuite.defaultTest.options = testSuite.defaultTest.options || {};
       testSuite.defaultTest.options.provider = await loadApiProvider(cmdObj.grader);
     }
     if (cmdObj.var) {
+      if (typeof testSuite.defaultTest === 'string') {
+        testSuite.defaultTest = {};
+      }
       testSuite.defaultTest = testSuite.defaultTest || {};
       testSuite.defaultTest.vars = { ...testSuite.defaultTest.vars, ...cmdObj.var };
     }
@@ -240,6 +260,8 @@ export async function doEval(
     // load scenarios or tests from an external file
     if (testSuite.scenarios) {
       testSuite.scenarios = (await maybeLoadFromExternalFile(testSuite.scenarios)) as Scenario[];
+      // Flatten the scenarios array in case glob patterns were used
+      testSuite.scenarios = testSuite.scenarios.flat();
     }
     for (const scenario of testSuite.scenarios || []) {
       if (scenario.tests) {
@@ -269,6 +291,7 @@ export async function doEval(
       ...options,
       eventSource: 'cli',
       abortSignal: evaluateOptions.abortSignal,
+      isRedteam: Boolean(config.redteam),
     });
 
     // Clear results from memory to avoid memory issues
@@ -405,7 +428,7 @@ export async function doEval(
 
         logger.info(
           `» This project needs your feedback. What's one thing we can improve? ${chalk.greenBright.bold(
-            'https://forms.gle/YFLgTe1dKJKNSCsU7',
+            'https://promptfoo.dev/feedback',
           )}`,
         );
       }
@@ -467,7 +490,7 @@ export async function doEval(
       // Provider breakdown
       const tracker = TokenUsageTracker.getInstance();
       const providerIds = tracker.getProviderIds();
-      if (providerIds.length > 0) {
+      if (providerIds.length > 1) {
         logger.info(`\n  ${chalk.cyan.bold('Provider Breakdown:')}`);
 
         // Sort providers by total token usage (descending)
@@ -556,7 +579,6 @@ export async function doEval(
       duration: Math.round((Date.now() - startTime) / 1000),
       isRedteam,
     });
-    await telemetry.send();
 
     if (cmdObj.watch) {
       if (initialization) {
@@ -637,11 +659,8 @@ export async function doEval(
             ),
           );
         }
-        logger.info('\nDone.');
         process.exitCode = Number.isSafeInteger(failedTestExitCode) ? failedTestExitCode : 100;
         return ret;
-      } else {
-        logger.info('\nDone.');
       }
     }
     if (testSuite.redteam) {
@@ -707,12 +726,16 @@ export function evalCommand(
     .option(
       '--prompt-prefix <path>',
       'This prefix is prepended to every prompt',
-      defaultConfig.defaultTest?.options?.prefix,
+      typeof defaultConfig.defaultTest === 'object'
+        ? defaultConfig.defaultTest?.options?.prefix
+        : undefined,
     )
     .option(
       '--prompt-suffix <path>',
       'This suffix is appended to every prompt.',
-      defaultConfig.defaultTest?.options?.suffix,
+      typeof defaultConfig.defaultTest === 'object'
+        ? defaultConfig.defaultTest?.options?.suffix
+        : undefined,
     )
     .option(
       '--var <key=value>',

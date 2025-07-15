@@ -1,6 +1,18 @@
 ---
-sidebar_position: 5
-sidebar_label: Overview
+sidebar_position: 22
+sidebar_label: Assertions & metrics
+title: Assertions and Metrics - LLM Output Validation
+description: Configure assertions and metrics to validate LLM outputs. Learn deterministic tests, model-graded evaluation, custom scoring, and performance metrics.
+keywords:
+  [
+    LLM assertions,
+    evaluation metrics,
+    output validation,
+    model grading,
+    deterministic testing,
+    performance metrics,
+    accuracy measurement,
+  ]
 ---
 
 # Assertions & metrics
@@ -29,17 +41,18 @@ tests:
 
 ## Assertion properties
 
-| Property     | Type               | Required | Description                                                                                                            |
-| ------------ | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| type         | string             | Yes      | Type of assertion                                                                                                      |
-| value        | string             | No       | The expected value, if applicable                                                                                      |
-| threshold    | number             | No       | The threshold value, applicable only to certain types such as `similar`, `cost`, `javascript`, `python`                |
-| weight       | number             | No       | How heavily to weigh the assertion. Defaults to 1.0                                                                    |
-| provider     | string             | No       | Some assertions (similarity, llm-rubric, model-graded-\*) require an [LLM provider](/docs/providers)                   |
-| rubricPrompt | string \| string[] | No       | Model-graded LLM prompt                                                                                                |
-| config       | object             | No       | External mapping of arbitrary strings to values passed to custom javascript/python assertions                          |
-| transform    | string             | No       | Process the output before running the assertion. See [Transformations](/docs/configuration/guide#transforming-outputs) |
-| metric       | string             | No       | Tag that appears in the web UI as a named metric                                                                       |
+| Property         | Type               | Required | Description                                                                                                                                                                                                                                                                            |
+| ---------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| type             | string             | Yes      | Type of assertion                                                                                                                                                                                                                                                                      |
+| value            | string             | No       | The expected value, if applicable                                                                                                                                                                                                                                                      |
+| threshold        | number             | No       | The threshold value, applicable only to certain types such as `similar`, `cost`, `javascript`, `python`                                                                                                                                                                                |
+| weight           | number             | No       | How heavily to weigh the assertion. Defaults to 1.0                                                                                                                                                                                                                                    |
+| provider         | string             | No       | Some assertions (similarity, llm-rubric, model-graded-\*) require an [LLM provider](/docs/providers)                                                                                                                                                                                   |
+| rubricPrompt     | string \| string[] | No       | Model-graded LLM prompt                                                                                                                                                                                                                                                                |
+| config           | object             | No       | External mapping of arbitrary strings to values passed to custom javascript/python assertions                                                                                                                                                                                          |
+| transform        | string             | No       | Process the output before running the assertion. See [Transformations](/docs/configuration/guide#transforming-outputs)                                                                                                                                                                 |
+| metric           | string             | No       | Tag that appears in the web UI as a named metric                                                                                                                                                                                                                                       |
+| contextTransform | string             | No       | Javascript expression to dynamically construct context for [context-based assertions](/docs/configuration/expected-outputs/model-graded#context-based). See [Context Transform](/docs/configuration/expected-outputs/model-graded#dynamically-via-context-transform) for more details. |
 
 ## Grouping assertions via Assertion Sets
 
@@ -131,6 +144,9 @@ These metrics are programmatic tests that are run on LLM output. [See all detail
 | [is-valid-function-call](/docs/configuration/expected-outputs/deterministic/#is-valid-function-call)               | Ensure that the function call matches the function's JSON schema  |
 | [is-valid-openai-function-call](/docs/configuration/expected-outputs/deterministic/#is-valid-openai-function-call) | Ensure that the function call matches the function's JSON schema  |
 | [is-valid-openai-tools-call](/docs/configuration/expected-outputs/deterministic/#is-valid-openai-tools-call)       | Ensure all tool calls match the tools JSON schema                 |
+| [trace-span-count](/docs/configuration/expected-outputs/deterministic/#trace-span-count)                           | Count spans matching patterns with min/max thresholds             |
+| [trace-span-duration](/docs/configuration/expected-outputs/deterministic/#trace-span-duration)                     | Check span durations with percentile support                      |
+| [trace-error-spans](/docs/configuration/expected-outputs/deterministic/#trace-error-spans)                         | Detect errors in traces by status codes, attributes, and messages |
 | [guardrails](/docs/configuration/expected-outputs/guardrails)                                                      | Ensure that the output does not contain harmful content           |
 
 :::tip
