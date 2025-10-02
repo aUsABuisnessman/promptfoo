@@ -1,7 +1,8 @@
-import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
+
+import { fireEvent, render, screen } from '@testing-library/react';
 import yaml from 'js-yaml';
-import { vi, expect, describe, it, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import YamlEditorComponent from './YamlEditor';
 
 vi.mock('react-router-dom', () => ({
@@ -19,7 +20,9 @@ const mockGetTestSuite = vi.fn().mockReturnValue({
 
 vi.mock('@app/stores/evalConfig', () => ({
   useStore: vi.fn(() => ({
+    config: {}, // Mock config object
     getTestSuite: mockGetTestSuite,
+    updateConfig: vi.fn(),
     setState: vi.fn(),
   })),
 }));
@@ -62,6 +65,13 @@ vi.mock('@mui/icons-material/Upload', () => ({
 describe('YamlEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset mock to default return value
+    mockGetTestSuite.mockReturnValue({
+      description: 'Test suite',
+      providers: [{ id: 'test-provider' }],
+      prompts: ['test prompt'],
+      tests: [{ description: 'test case' }],
+    });
   });
 
   afterEach(() => {
@@ -166,7 +176,7 @@ describe('YamlEditor', () => {
   });
 
   it('includes evaluateOptions from store in YAML', () => {
-    mockGetTestSuite.mockReturnValueOnce({
+    mockGetTestSuite.mockReturnValue({
       description: 'Test suite',
       providers: [{ id: 'test-provider' }],
       prompts: ['test prompt'],
@@ -182,7 +192,7 @@ describe('YamlEditor', () => {
   });
 
   it('includes defaultTest from store in YAML', () => {
-    mockGetTestSuite.mockReturnValueOnce({
+    mockGetTestSuite.mockReturnValue({
       description: 'Test suite',
       providers: [{ id: 'test-provider' }],
       prompts: ['test prompt'],
@@ -207,7 +217,7 @@ describe('YamlEditor', () => {
   });
 
   it('includes derivedMetrics from store in YAML', () => {
-    mockGetTestSuite.mockReturnValueOnce({
+    mockGetTestSuite.mockReturnValue({
       description: 'Test suite',
       providers: [{ id: 'test-provider' }],
       prompts: ['test prompt'],

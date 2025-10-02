@@ -5,6 +5,11 @@ import { VERSION } from '../../constants';
 import { renderPrompt } from '../../evaluatorHelpers';
 import { getUserEmail } from '../../globalConfig/accounts';
 import logger from '../../logger';
+import { fetchWithProxy } from '../../util/fetch';
+import invariant from '../../util/invariant';
+import { accumulateResponseTokenUsage, createEmptyTokenUsage } from '../../util/tokenUsageUtils';
+import { getRemoteGenerationUrl, neverGenerateRemote } from '../remoteGeneration';
+
 import type {
   ApiProvider,
   CallApiContextParams,
@@ -12,9 +17,6 @@ import type {
   ProviderOptions,
   ProviderResponse,
 } from '../../types/providers';
-import invariant from '../../util/invariant';
-import { safeJsonStringify } from '../../util/json';
-import { getRemoteGenerationUrl, neverGenerateRemote } from '../remoteGeneration';
 
 interface BestOfNResponse {
   modifiedPrompts: string[];
@@ -55,15 +57,16 @@ export default class BestOfNProvider implements ApiProvider {
     context?: CallApiContextParams,
     options?: CallApiOptionsParams,
   ): Promise<ProviderResponse> {
-    logger.debug(`[Best-of-N] callApi context: ${safeJsonStringify(context)}`);
+    logger.debug('[Best-of-N] callApi context', { context });
     invariant(context?.originalProvider, 'Expected originalProvider to be set');
     invariant(context?.vars, 'Expected vars to be set');
 
     const targetProvider: ApiProvider = context.originalProvider;
+    const targetTokenUsage = createEmptyTokenUsage();
 
     try {
       // Get candidate prompts from the server
-      const response = await fetch(getRemoteGenerationUrl(), {
+      const response = await fetchWithProxy(getRemoteGenerationUrl(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -113,6 +116,7 @@ export default class BestOfNProvider implements ApiProvider {
         try {
           const response = await targetProvider.callApi(renderedPrompt, context, options);
           lastResponse = response;
+          accumulateResponseTokenUsage(targetTokenUsage, response);
           currentStep++;
           if (!response.error) {
             successfulResponse = response;
@@ -130,9 +134,12 @@ export default class BestOfNProvider implements ApiProvider {
       });
 
       if (successfulResponse) {
+        (successfulResponse as ProviderResponse).tokenUsage = targetTokenUsage;
         return successfulResponse;
       }
-
+      if (lastResponse) {
+        (lastResponse as ProviderResponse).tokenUsage = targetTokenUsage;
+      }
       return (
         lastResponse || {
           error: 'All candidates failed',

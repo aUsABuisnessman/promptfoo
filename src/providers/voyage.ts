@@ -1,8 +1,13 @@
 import { fetchWithCache } from '../cache';
 import { getEnvString } from '../envars';
 import logger from '../logger';
-import type { ApiEmbeddingProvider, ProviderResponse, ProviderEmbeddingResponse } from '../types';
 import { REQUEST_TIMEOUT_MS } from './shared';
+
+import type {
+  ApiEmbeddingProvider,
+  ProviderEmbeddingResponse,
+  ProviderResponse,
+} from '../types/index';
 
 export class VoyageEmbeddingProvider implements ApiEmbeddingProvider {
   modelName: string;
@@ -72,7 +77,6 @@ export class VoyageEmbeddingProvider implements ApiEmbeddingProvider {
       logger.error(`API call error: ${err}`);
       throw err;
     }
-    logger.debug(`\tVoyage embeddings API response: ${JSON.stringify(data)}`);
 
     try {
       const embedding = data?.data?.[0]?.embedding;

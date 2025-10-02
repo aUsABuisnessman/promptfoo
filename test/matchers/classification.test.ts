@@ -1,11 +1,12 @@
 import { matchesClassification } from '../../src/matchers';
 import { HuggingfaceTextClassificationProvider } from '../../src/providers/huggingface';
+
 import type {
   ApiProvider,
   GradingConfig,
   ProviderClassificationResponse,
   ProviderResponse,
-} from '../../src/types';
+} from '../../src/types/index';
 
 describe('matchesClassification', () => {
   class TestGrader implements ApiProvider {

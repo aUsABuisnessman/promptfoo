@@ -1,7 +1,8 @@
 import * as fs from 'fs';
-import * as yaml from 'js-yaml';
 import * as os from 'os';
 import path from 'path';
+
+import * as yaml from 'js-yaml';
 import { doGenerateRedteam } from '../../src/redteam/commands/generate';
 import { doRedteamRun } from '../../src/redteam/shared';
 import { checkRemoteHealth } from '../../src/util/apiHealth';
@@ -56,8 +57,18 @@ jest.mock('../../src/share', () => ({
   createShareableUrl: jest.fn().mockResolvedValue('http://example.com'),
 }));
 jest.mock('../../src/util', () => ({
-  isRunningUnderNpx: jest.fn(() => false),
   setupEnv: jest.fn(),
+}));
+
+jest.mock('../../src/util/promptfooCommand', () => ({
+  promptfooCommand: jest.fn().mockImplementation((cmd) => {
+    if (cmd === '') {
+      return 'promptfoo';
+    }
+    return `promptfoo ${cmd}`;
+  }),
+  detectInstaller: jest.fn().mockReturnValue('unknown'),
+  isRunningUnderNpx: jest.fn().mockReturnValue(false),
 }));
 jest.mock('fs');
 jest.mock('js-yaml');

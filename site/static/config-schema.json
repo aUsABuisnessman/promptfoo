@@ -138,6 +138,9 @@
                             "CLOUDFLARE_API_KEY": {
                               "type": "string"
                             },
+                            "COMETAPI_KEY": {
+                              "type": "string"
+                            },
                             "COHERE_API_KEY": {
                               "type": "string"
                             },
@@ -150,7 +153,16 @@
                             "DATABRICKS_WORKSPACE_URL": {
                               "type": "string"
                             },
+                            "DOCKER_MODEL_RUNNER_BASE_URL": {
+                              "type": "string"
+                            },
+                            "DOCKER_MODEL_RUNNER_API_KEY": {
+                              "type": "string"
+                            },
                             "FAL_KEY": {
+                              "type": "string"
+                            },
+                            "GITHUB_TOKEN": {
                               "type": "string"
                             },
                             "GOOGLE_API_HOST": {
@@ -160,6 +172,18 @@
                               "type": "string"
                             },
                             "GOOGLE_API_KEY": {
+                              "type": "string"
+                            },
+                            "GOOGLE_PROJECT_ID": {
+                              "type": "string"
+                            },
+                            "GOOGLE_LOCATION": {
+                              "type": "string"
+                            },
+                            "GOOGLE_GENERATIVE_AI_API_KEY": {
+                              "type": "string"
+                            },
+                            "GEMINI_API_KEY": {
                               "type": "string"
                             },
                             "GROQ_API_KEY": {
@@ -181,9 +205,6 @@
                               "type": "string"
                             },
                             "JFROG_API_KEY": {
-                              "type": "string"
-                            },
-                            "LAMBDA_API_KEY": {
                               "type": "string"
                             },
                             "LANGFUSE_HOST": {
@@ -211,6 +232,12 @@
                               "type": "string"
                             },
                             "MISTRAL_API_KEY": {
+                              "type": "string"
+                            },
+                            "NSCALE_SERVICE_TOKEN": {
+                              "type": "string"
+                            },
+                            "NSCALE_API_KEY": {
                               "type": "string"
                             },
                             "OLLAMA_API_KEY": {
@@ -244,6 +271,21 @@
                               "type": "string"
                             },
                             "PROMPTFOO_CA_CERT_PATH": {
+                              "type": "string"
+                            },
+                            "PROMPTFOO_PFX_CERT_PATH": {
+                              "type": "string"
+                            },
+                            "PROMPTFOO_PFX_PASSWORD": {
+                              "type": "string"
+                            },
+                            "PROMPTFOO_JKS_CERT_PATH": {
+                              "type": "string"
+                            },
+                            "PROMPTFOO_JKS_PASSWORD": {
+                              "type": "string"
+                            },
+                            "PROMPTFOO_JKS_ALIAS": {
                               "type": "string"
                             },
                             "PROMPTFOO_INSECURE_SSL": {
@@ -509,12 +551,14 @@
                                               "contains",
                                               "contains-all",
                                               "contains-any",
+                                              "contains-html",
                                               "contains-json",
                                               "contains-sql",
                                               "contains-xml",
                                               "context-faithfulness",
                                               "context-recall",
                                               "context-relevance",
+                                              "conversation-relevance",
                                               "cost",
                                               "equals",
                                               "factuality",
@@ -525,6 +569,7 @@
                                               "icontains",
                                               "icontains-all",
                                               "icontains-any",
+                                              "is-html",
                                               "is-json",
                                               "is-refusal",
                                               "is-sql",
@@ -559,7 +604,7 @@
                                           },
                                           {
                                             "type": "string",
-                                            "enum": ["select-best", "human"]
+                                            "enum": ["select-best", "human", "max-score"]
                                           },
                                           {}
                                         ]
@@ -1103,8 +1148,13 @@
                           "excessive-agency",
                           "financial:calculation-error",
                           "financial:compliance-violation",
+                          "financial:confidential-disclosure",
+                          "financial:counterfactual",
                           "financial:data-leakage",
+                          "financial:defamation",
                           "financial:hallucination",
+                          "financial:impartiality",
+                          "financial:misconduct",
                           "financial:sycophancy",
                           "foundation",
                           "guardrails-eval",
@@ -1142,10 +1192,20 @@
                           "imitation",
                           "indirect-prompt-injection",
                           "intent",
+                          "iso:42001",
+                          "iso:42001:accountability",
+                          "iso:42001:fairness",
+                          "iso:42001:privacy",
+                          "iso:42001:robustness",
+                          "iso:42001:safety",
+                          "iso:42001:security",
+                          "iso:42001:transparency",
                           "mcp",
+                          "medical",
                           "medical:anchoring-bias",
                           "medical:hallucination",
                           "medical:incorrect-knowledge",
+                          "medical:off-label-use",
                           "medical:prioritization-error",
                           "medical:sycophancy",
                           "misinformation",
@@ -1224,6 +1284,7 @@
                           "reasoning-dos",
                           "religion",
                           "shell-injection",
+                          "special-token-injection",
                           "sql-injection",
                           "ssrf",
                           "system-prompt-override",
@@ -1232,12 +1293,13 @@
                           "toxic-chat",
                           "toxicity",
                           "unsafebench",
+                          "unverifiable-claims",
+                          "vlguard",
                           "xstest"
                         ]
                       },
                       {
-                        "type": "string",
-                        "pattern": "^file\\:\\/\\/"
+                        "type": "string"
                       }
                     ],
                     "description": "Name of the plugin or path to custom plugin"
@@ -1288,8 +1350,13 @@
                               "excessive-agency",
                               "financial:calculation-error",
                               "financial:compliance-violation",
+                              "financial:confidential-disclosure",
+                              "financial:counterfactual",
                               "financial:data-leakage",
+                              "financial:defamation",
                               "financial:hallucination",
+                              "financial:impartiality",
+                              "financial:misconduct",
                               "financial:sycophancy",
                               "foundation",
                               "guardrails-eval",
@@ -1327,10 +1394,20 @@
                               "imitation",
                               "indirect-prompt-injection",
                               "intent",
+                              "iso:42001",
+                              "iso:42001:accountability",
+                              "iso:42001:fairness",
+                              "iso:42001:privacy",
+                              "iso:42001:robustness",
+                              "iso:42001:safety",
+                              "iso:42001:security",
+                              "iso:42001:transparency",
                               "mcp",
+                              "medical",
                               "medical:anchoring-bias",
                               "medical:hallucination",
                               "medical:incorrect-knowledge",
+                              "medical:off-label-use",
                               "medical:prioritization-error",
                               "medical:sycophancy",
                               "misinformation",
@@ -1409,6 +1486,7 @@
                               "reasoning-dos",
                               "religion",
                               "shell-injection",
+                              "special-token-injection",
                               "sql-injection",
                               "ssrf",
                               "system-prompt-override",
@@ -1417,12 +1495,13 @@
                               "toxic-chat",
                               "toxicity",
                               "unsafebench",
+                              "unverifiable-claims",
+                              "vlguard",
                               "xstest"
                             ]
                           },
                           {
-                            "type": "string",
-                            "pattern": "^file\\:\\/\\/"
+                            "type": "string"
                           }
                         ],
                         "description": "Name of the plugin"
@@ -1480,13 +1559,13 @@
                           "jailbreak:composite",
                           "jailbreak:likert",
                           "jailbreak:tree",
+                          "layer",
                           "leetspeak",
                           "math-prompt",
                           "mischievous-user",
                           "morse",
                           "multilingual",
                           "other-encodings",
-                          "pandamonium",
                           "piglatin",
                           "prompt-injection",
                           "retry",
@@ -1519,7 +1598,7 @@
                   }
                 ]
               },
-              "description": "Strategies to use for redteam generation.\n\nDefaults to basic, jailbreak, jailbreak:composite\nSupports audio, base64, basic, best-of-n, camelcase, citation, crescendo, custom, default, emoji, gcg, goat, hex, homoglyph, image, jailbreak, jailbreak:composite, jailbreak:likert, jailbreak:tree, leetspeak, math-prompt, mischievous-user, morse, multilingual, other-encodings, pandamonium, piglatin, prompt-injection, retry, rot13, video",
+              "description": "Strategies to use for redteam generation.\n\nDefaults to basic, jailbreak, jailbreak:composite\nSupports audio, base64, basic, best-of-n, camelcase, citation, crescendo, custom, default, emoji, gcg, goat, hex, homoglyph, image, jailbreak, jailbreak:composite, jailbreak:likert, jailbreak:tree, layer, leetspeak, math-prompt, mischievous-user, morse, multilingual, other-encodings, piglatin, prompt-injection, retry, rot13, video",
               "default": ["default"]
             },
             "maxConcurrency": {
@@ -1749,6 +1828,9 @@
             "share": {
               "type": "boolean"
             },
+            "noShare": {
+              "type": "boolean"
+            },
             "progressBar": {
               "type": "boolean"
             },
@@ -1795,6 +1877,9 @@
             },
             "promptSuffix": {
               "type": "string"
+            },
+            "retryErrors": {
+              "type": "boolean"
             },
             "envPath": {
               "type": "string"

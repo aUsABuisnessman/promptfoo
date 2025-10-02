@@ -1,11 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+
 import { getUserEmail } from '../../../src/globalConfig/accounts';
 import {
-  getAllFiles,
-  generatePoisonedDocument,
-  poisonDocument,
   doPoisonDocuments,
+  generatePoisonedDocument,
+  getAllFiles,
+  poisonDocument,
 } from '../../../src/redteam/commands/poison';
 import { getRemoteGenerationUrl } from '../../../src/redteam/remoteGeneration';
 
@@ -72,9 +73,9 @@ describe('poison command', () => {
 
       expect(fetch).toHaveBeenCalledWith(getRemoteGenerationUrl(), {
         method: 'POST',
-        headers: {
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify({
           task: 'poison-document',
           document: 'test doc',

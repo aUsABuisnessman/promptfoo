@@ -1,17 +1,17 @@
+import * as fs from 'fs';
+
 import async from 'async';
 import chalk from 'chalk';
 import cliProgress from 'cli-progress';
 import Table from 'cli-table3';
-import * as fs from 'fs';
 import yaml from 'js-yaml';
 import cliState from '../cliState';
 import { getEnvString } from '../envars';
 import logger, { getLogLevel } from '../logger';
-import { isProviderOptions, type TestCase, type TestCaseWithPlugin } from '../types';
+import { type TestCase, type TestCaseWithPlugin } from '../types/index';
 import { checkRemoteHealth } from '../util/apiHealth';
 import invariant from '../util/invariant';
 import { extractVariablesFromTemplates } from '../util/templates';
-import type { StrategyExemptPlugin } from './constants';
 import {
   ALIASED_PLUGIN_MAPPINGS,
   BIAS_PLUGINS,
@@ -22,7 +22,6 @@ import {
   Severity,
   STRATEGY_COLLECTION_MAPPINGS,
   STRATEGY_COLLECTIONS,
-  STRATEGY_EXEMPT_PLUGINS,
 } from './constants';
 import { extractEntities } from './extraction/entities';
 import { extractSystemPurpose } from './extraction/purpose';
@@ -32,8 +31,12 @@ import { redteamProviderManager } from './providers/shared';
 import { getRemoteHealthUrl, shouldGenerateRemote } from './remoteGeneration';
 import { loadStrategy, Strategies, validateStrategies } from './strategies';
 import { DEFAULT_LANGUAGES } from './strategies/multilingual';
-import type { RedteamStrategyObject, SynthesizeOptions } from './types';
 import { extractGoalFromPrompt, getShortPluginId } from './util';
+
+import { pluginMatchesStrategyTargets } from './strategies/util';
+import type { RedteamStrategyObject, SynthesizeOptions } from './types';
+
+const MAX_MAX_CONCURRENCY = 20;
 
 /**
  * Gets the severity level for a plugin based on its ID and configuration.
@@ -177,46 +180,6 @@ const formatTestCount = (numTests: number, strategy: boolean): string =>
  *                       Supports both exact matches and category prefixes (e.g., 'harmful' matches 'harmful:hate')
  * @returns True if the strategy should be applied to this test case, false otherwise
  */
-function pluginMatchesStrategyTargets(
-  testCase: TestCaseWithPlugin,
-  strategyId: string,
-  targetPlugins?: NonNullable<RedteamStrategyObject['config']>['plugins'],
-): boolean {
-  const pluginId = testCase.metadata?.pluginId;
-  if (STRATEGY_EXEMPT_PLUGINS.includes(pluginId as StrategyExemptPlugin)) {
-    return false;
-  }
-  if (isProviderOptions(testCase.provider) && testCase.provider?.id === 'sequence') {
-    // Sequence providers are verbatim and strategies don't apply
-    return false;
-  }
-
-  // Check if this strategy is excluded for this plugin
-  const excludedStrategies = testCase.metadata?.pluginConfig?.excludeStrategies as
-    | string[]
-    | undefined;
-  if (Array.isArray(excludedStrategies) && excludedStrategies.includes(strategyId)) {
-    return false;
-  }
-
-  if (!targetPlugins || targetPlugins.length === 0) {
-    return true; // If no targets specified, strategy applies to all plugins
-  }
-
-  return targetPlugins.some((target) => {
-    // Direct match
-    if (target === pluginId) {
-      return true;
-    }
-
-    // Category match (e.g. 'harmful' matches 'harmful:hate')
-    if (pluginId.startsWith(`${target}:`)) {
-      return true;
-    }
-
-    return false;
-  });
-}
 
 /**
  * Helper function to calculate the number of expected test cases for the multilingual strategy.
@@ -263,9 +226,15 @@ async function applyStrategies(
       const loadedStrategy = await loadStrategy(strategy.id);
       strategyAction = loadedStrategy.action;
     } else {
-      // Handle custom strategy variants (e.g., custom:aggressive)
-      const baseStrategyId = strategy.id.includes(':') ? strategy.id.split(':')[0] : strategy.id;
-      const builtinStrategy = Strategies.find((s) => s.id === baseStrategyId);
+      // First try to find the exact strategy ID (e.g., jailbreak:composite)
+      let builtinStrategy = Strategies.find((s) => s.id === strategy.id);
+
+      // If not found, handle custom strategy variants (e.g., custom:aggressive)
+      if (!builtinStrategy && strategy.id.includes(':')) {
+        const baseStrategyId = strategy.id.split(':')[0];
+        builtinStrategy = Strategies.find((s) => s.id === baseStrategyId);
+      }
+
       if (!builtinStrategy) {
         logger.warn(`Strategy ${strategy.id} not registered, skipping`);
         continue;
@@ -305,15 +274,45 @@ async function applyStrategies(
         })),
     );
 
+    // Compute a display id for reporting (helpful for layered strategies)
+    const displayId =
+      strategy.id === 'layer' && Array.isArray(strategy.config?.steps)
+        ? `layer(${(strategy.config!.steps as any[])
+            .map((st) => (typeof st === 'string' ? st : st.id))
+            .join('→')})`
+        : strategy.id;
+
     // Special case for multilingual strategy to account for languages multiplier
     if (strategy.id === 'multilingual') {
       const requestedCount = getMultilingualRequestedCount(applicableTestCases, strategy);
-      strategyResults[strategy.id] = {
+      strategyResults[displayId] = {
+        requested: requestedCount,
+        generated: strategyTestCases.length,
+      };
+    } else if (strategy.id === 'layer') {
+      // Estimate requested count for layer: multiply by language factors of any multilingual steps
+      let multiplier = 1;
+      const steps: any[] = Array.isArray(strategy.config?.steps)
+        ? (strategy.config!.steps as any[])
+        : [];
+      for (const st of steps) {
+        const stepId = typeof st === 'string' ? st : st.id;
+        if (stepId === 'multilingual') {
+          const stepCfg = (typeof st === 'string' ? {} : st.config) || {};
+          const numLangs =
+            Array.isArray(stepCfg.languages) && stepCfg.languages.length > 0
+              ? stepCfg.languages.length
+              : DEFAULT_LANGUAGES.length;
+          multiplier *= numLangs;
+        }
+      }
+      const requestedCount = applicableTestCases.length * multiplier;
+      strategyResults[displayId] = {
         requested: requestedCount,
         generated: strategyTestCases.length,
       };
     } else {
-      strategyResults[strategy.id] = {
+      strategyResults[displayId] = {
         requested: applicableTestCases.length,
         generated: strategyTestCases.length,
       };
@@ -349,6 +348,29 @@ export function getTestCount(
     const numLanguages =
       Object.keys(strategy.config?.languages ?? {}).length || DEFAULT_LANGUAGES.length;
     return totalPluginTests * numLanguages;
+  }
+
+  // Sequence strategy: approximate by multiplying plugin tests by language multipliers of any multilingual steps
+  if (strategy.id === 'layer') {
+    const steps: any[] = Array.isArray(strategy.config?.steps)
+      ? (strategy.config!.steps as any[])
+      : [];
+    let multiplier = 1;
+    for (const st of steps) {
+      const stepId = typeof st === 'string' ? st : st.id;
+      if (stepId === 'multilingual') {
+        const stepCfg = (typeof st === 'string' ? {} : st.config) || {};
+        if (Array.isArray(stepCfg.languages) && stepCfg.languages.length === 0) {
+          continue; // no additional tests
+        }
+        const numLangs =
+          Array.isArray(stepCfg.languages) && stepCfg.languages.length > 0
+            ? stepCfg.languages.length
+            : DEFAULT_LANGUAGES.length;
+        multiplier *= numLangs;
+      }
+    }
+    return totalPluginTests * multiplier;
   }
 
   // Retry strategy doubles the plugin tests
@@ -487,6 +509,11 @@ export async function synthesize({
     logger.warn('Delay is enabled, setting max concurrency to 1.');
   }
 
+  if (maxConcurrency > MAX_MAX_CONCURRENCY) {
+    maxConcurrency = MAX_MAX_CONCURRENCY;
+    logger.info(`Max concurrency for test generation is capped at ${MAX_MAX_CONCURRENCY}.`);
+  }
+
   const expandedStrategies: typeof strategies = [];
   strategies.forEach((strategy) => {
     if (isStrategyCollection(strategy.id)) {
@@ -506,13 +533,24 @@ export async function synthesize({
     }
   });
 
-  // Deduplicate strategies by id
+  // Deduplicate strategies by a key. For most strategies, the key is the id.
+  // For 'layer', include the ordered step ids in the key so different layers are preserved.
   const seen = new Set<string>();
+  const keyForStrategy = (s: (typeof strategies)[number]): string => {
+    if (s.id === 'layer' && s.config && Array.isArray((s as any).config.steps)) {
+      const steps = ((s as any).config.steps as any[]).map((st) =>
+        typeof st === 'string' ? st : st?.id,
+      );
+      return `layer:${steps.join('->')}`;
+    }
+    return s.id;
+  };
   strategies = expandedStrategies.filter((strategy) => {
-    if (seen.has(strategy.id)) {
+    const key = keyForStrategy(strategy);
+    if (seen.has(key)) {
       return false;
     }
-    seen.add(strategy.id);
+    seen.add(key);
     return true;
   });
 
@@ -646,7 +684,7 @@ export async function synthesize({
         registeredPlugin.validate({
           language,
           modifiers: {
-            testGenerationInstructions,
+            ...(testGenerationInstructions ? { testGenerationInstructions } : {}),
             ...(plugin.config?.modifiers || {}),
           },
           ...resolvePluginConfig(plugin.config),
@@ -743,7 +781,7 @@ export async function synthesize({
         config: {
           language,
           modifiers: {
-            testGenerationInstructions,
+            ...(testGenerationInstructions ? { testGenerationInstructions } : {}),
             ...(plugin.config?.modifiers || {}),
           },
           ...resolvePluginConfig(plugin.config),
@@ -762,6 +800,10 @@ export async function synthesize({
             pluginConfig: resolvePluginConfig(plugin.config),
             severity:
               plugin.severity ?? getPluginSeverity(plugin.id, resolvePluginConfig(plugin.config)),
+            modifiers: {
+              ...(testGenerationInstructions ? { testGenerationInstructions } : {}),
+              ...(plugin.config?.modifiers || {}),
+            },
             ...(t?.metadata || {}),
           },
         }));
@@ -808,6 +850,10 @@ export async function synthesize({
             pluginConfig: resolvePluginConfig(plugin.config),
             severity:
               plugin.severity || getPluginSeverity(plugin.id, resolvePluginConfig(plugin.config)),
+            modifiers: {
+              ...(testGenerationInstructions ? { testGenerationInstructions } : {}),
+              ...(plugin.config?.modifiers || {}),
+            },
             ...(t.metadata || {}),
           },
         }));

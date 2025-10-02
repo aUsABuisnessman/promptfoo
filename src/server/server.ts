@@ -1,17 +1,19 @@
 import compression from 'compression';
 import cors from 'cors';
-import 'dotenv/config';
-import type { Request, Response } from 'express';
-import express from 'express';
+import dotenv from 'dotenv';
+
+dotenv.config({ quiet: true });
+
 import http from 'node:http';
 import path from 'node:path';
+
+import express from 'express';
 import { Server as SocketIOServer } from 'socket.io';
 import { fromError } from 'zod-validation-error';
 import { getDefaultPort, VERSION } from '../constants';
 import { setupSignalWatcher } from '../database/signal';
 import { getDirectory } from '../esm';
 import { cloudConfig } from '../globalConfig/cloud';
-import type { Prompt, PromptWithMetadata, TestCase, TestSuite } from '../index';
 import logger from '../logger';
 import { runDbMigrations } from '../migrate';
 import Eval, { getEvalSummaries } from '../models/eval';
@@ -19,7 +21,6 @@ import { getRemoteHealthUrl } from '../redteam/remoteGeneration';
 import { createShareableUrl, determineShareDomain, stripAuthFromUrl } from '../share';
 import telemetry, { TelemetryEventSchema } from '../telemetry';
 import { synthesizeFromTestSuite } from '../testCase/synthesis';
-import type { EvalSummary } from '../types';
 import { checkRemoteHealth } from '../util/apiHealth';
 import {
   getPrompts,
@@ -37,6 +38,11 @@ import { providersRouter } from './routes/providers';
 import { redteamRouter } from './routes/redteam';
 import { tracesRouter } from './routes/traces';
 import { userRouter } from './routes/user';
+import versionRouter from './routes/version';
+import type { Request, Response } from 'express';
+
+import type { Prompt, PromptWithMetadata, TestCase, TestSuite } from '../index';
+import type { EvalSummary } from '../types/index';
 
 // Prompts cache
 let allPrompts: PromptWithMetadata[] | null = null;
@@ -110,10 +116,19 @@ export function createApp() {
   app.get(
     '/api/results',
     async (
-      req: Request<{}, {}, {}, { datasetId?: string }>,
+      req: Request<
+        {},
+        {},
+        {},
+        { datasetId?: string; type?: 'redteam' | 'eval'; includeProviders?: boolean }
+      >,
       res: Response<{ data: EvalSummary[] }>,
     ): Promise<void> => {
-      const previousResults = await getEvalSummaries(req.query.datasetId);
+      const previousResults = await getEvalSummaries(
+        req.query.datasetId,
+        req.query.type,
+        req.query.includeProviders,
+      );
       res.json({ data: previousResults });
     },
   );
@@ -221,6 +236,7 @@ export function createApp() {
   app.use('/api/configs', configsRouter);
   app.use('/api/model-audit', modelAuditRouter);
   app.use('/api/traces', tracesRouter);
+  app.use('/api/version', versionRouter);
 
   app.post('/api/telemetry', async (req: Request, res: Response): Promise<void> => {
     try {

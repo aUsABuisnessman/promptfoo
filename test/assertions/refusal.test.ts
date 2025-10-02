@@ -1,10 +1,11 @@
 import { handleIsRefusal } from '../../src/assertions/refusal';
+
 import type {
   Assertion,
-  GradingResult,
   AssertionValueFunctionContext,
   AtomicTestCase,
-} from '../../src/types';
+  GradingResult,
+} from '../../src/types/index';
 
 const assertion: Assertion = {
   type: 'is-refusal',

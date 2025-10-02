@@ -1,26 +1,27 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import Editor from 'react-simple-code-editor';
+
 import { useStore } from '@app/stores/evalConfig';
+import CancelIcon from '@mui/icons-material/Cancel';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 import UploadIcon from '@mui/icons-material/Upload';
-import CancelIcon from '@mui/icons-material/Cancel';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Snackbar from '@mui/material/Snackbar';
-import Tooltip from '@mui/material/Tooltip';
-import Typography from '@mui/material/Typography';
-import Alert from '@mui/material/Alert';
 import Stack from '@mui/material/Stack';
 import { useTheme } from '@mui/material/styles';
+import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
 import { styled } from '@mui/system';
-import type { UnifiedConfig } from '@promptfoo/types';
 import yaml from 'js-yaml';
 // @ts-expect-error: No types available
 import { highlight, languages } from 'prismjs/components/prism-core';
+import { Link } from 'react-router-dom';
+import Editor from 'react-simple-code-editor';
+import type { UnifiedConfig } from '@promptfoo/types';
 import 'prismjs/components/prism-yaml';
 import './YamlEditor.css';
 import 'prismjs/themes/prism.css';
@@ -53,11 +54,7 @@ const StyledLink = styled(Link)({
   textDecoration: 'none',
 });
 
-const YamlEditorComponent: React.FC<YamlEditorProps> = ({
-  initialConfig,
-  readOnly = false,
-  initialYaml,
-}) => {
+const YamlEditorComponent = ({ initialConfig, readOnly = false, initialYaml }: YamlEditorProps) => {
   const darkMode = useTheme().palette.mode === 'dark';
   const [code, setCode] = React.useState('');
   const [originalCode, setOriginalCode] = React.useState('');
@@ -71,7 +68,7 @@ const YamlEditorComponent: React.FC<YamlEditorProps> = ({
     severity?: 'success' | 'error' | 'warning' | 'info';
   }>({ show: false, message: '', severity: 'info' });
 
-  const { getTestSuite, updateConfig } = useStore();
+  const { config, getTestSuite, updateConfig } = useStore();
 
   const parseAndUpdateStore = (yamlContent: string) => {
     try {
@@ -178,6 +175,7 @@ const YamlEditorComponent: React.FC<YamlEditorProps> = ({
     setNotification({ show: true, message: 'Reset to current configuration', severity: 'info' });
   };
 
+  // Initial load effect
   React.useEffect(() => {
     if (initialYaml) {
       const formattedCode = ensureSchemaComment(initialYaml);
@@ -195,6 +193,21 @@ const YamlEditorComponent: React.FC<YamlEditorProps> = ({
     }
     // Deliberately omitting getTestSuite from dependencies to avoid potential re-render loops
   }, [initialYaml, initialConfig]);
+
+  // Auto-update effect for store changes (only when not editing)
+  React.useEffect(() => {
+    if (!initialYaml && !initialConfig && !isEditing) {
+      const currentConfig = getTestSuite();
+      const formattedCode = formatYamlWithSchema(currentConfig);
+      // Only update if the content has actually changed to avoid cursor jumping
+      if (formattedCode !== code) {
+        setCode(formattedCode);
+        setOriginalCode(formattedCode);
+      }
+    }
+    // Deliberately omitting getTestSuite from dependencies to avoid infinite re-renders
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config, isEditing, initialYaml, initialConfig, code]);
 
   // Track unsaved changes
   React.useEffect(() => {

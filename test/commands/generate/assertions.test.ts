@@ -1,11 +1,13 @@
 import fs from 'fs';
+
 import yaml from 'js-yaml';
 import { synthesizeFromTestSuite } from '../../../src/assertions/synthesis';
 import { disableCache } from '../../../src/cache';
 import { doGenerateAssertions } from '../../../src/commands/generate/assertions';
 import telemetry from '../../../src/telemetry';
-import type { Assertion, TestSuite } from '../../../src/types';
 import { resolveConfigs } from '../../../src/util/config/load';
+
+import type { Assertion, TestSuite } from '../../../src/types';
 
 jest.mock('fs');
 jest.mock('js-yaml');
@@ -18,9 +20,14 @@ jest.mock('../../../src/telemetry', () => ({
   send: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('../../../src/util', () => ({
-  isRunningUnderNpx: jest.fn().mockReturnValue(false),
   printBorder: jest.fn(),
   setupEnv: jest.fn(),
+}));
+
+jest.mock('../../../src/util/promptfooCommand', () => ({
+  promptfooCommand: jest.fn().mockReturnValue('promptfoo eval'),
+  detectInstaller: jest.fn().mockReturnValue('unknown'),
+  isRunningUnderNpx: jest.fn().mockReturnValue(false),
 }));
 
 describe('assertion generation', () => {

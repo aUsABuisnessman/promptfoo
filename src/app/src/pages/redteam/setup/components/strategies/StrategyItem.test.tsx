@@ -1,7 +1,7 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import React from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
 import { StrategyItem } from './StrategyItem';
+
 import type { StrategyCardData } from './types';
 
 describe('StrategyItem', () => {
@@ -112,24 +112,6 @@ describe('StrategyItem', () => {
       );
 
       expect(screen.getByText('Multi-modal')).toBeInTheDocument();
-    });
-
-    it('shows Experimental pill for pandamonium strategy', () => {
-      const experimentalStrategy: StrategyCardData = {
-        ...baseStrategy,
-        id: 'pandamonium',
-      };
-
-      render(
-        <StrategyItem
-          strategy={experimentalStrategy}
-          isSelected={false}
-          onToggle={mockOnToggle}
-          onConfigClick={mockOnConfigClick}
-        />,
-      );
-
-      expect(screen.getByText('Experimental')).toBeInTheDocument();
     });
 
     it('renders multiple badges when a strategy belongs to multiple categories', () => {

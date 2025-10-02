@@ -1,25 +1,27 @@
 import dedent from 'dedent';
 import { Router } from 'express';
-import type { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { fromZodError } from 'zod-validation-error';
 import { getUserEmail, setUserEmail } from '../../globalConfig/accounts';
+import promptfoo from '../../index';
+import logger from '../../logger';
+import Eval, { EvalQueries } from '../../models/eval';
+import EvalResult from '../../models/evalResult';
+import { EvalResultsFilterMode } from '../../types/index';
+import { deleteEval, deleteEvals, updateResult, writeResultsToDatabase } from '../../util/database';
+import invariant from '../../util/invariant';
+import { ApiSchemas } from '../apiSchemas';
+import type { Request, Response } from 'express';
+
 import type {
+  EvalTableDTO,
   EvaluateSummaryV2,
   EvaluateTestSuiteWithEvaluateOptions,
   GradingResult,
   Job,
   ResultsFile,
-  EvalTableDTO,
 } from '../../index';
-import promptfoo from '../../index';
-import logger from '../../logger';
-import Eval from '../../models/eval';
-import EvalResult from '../../models/evalResult';
-import { updateResult, deleteEval, writeResultsToDatabase } from '../../util/database';
-import invariant from '../../util/invariant';
-import { ApiSchemas } from '../apiSchemas';
 
 export const evalRouter = Router();
 
@@ -168,9 +170,13 @@ evalRouter.get('/:id/table', async (req: Request, res: Response): Promise<void> 
   const { id } = req.params;
   const limit = Number(req.query.limit) || 50;
   const offset = Number(req.query.offset) || 0;
-  const filter = String(req.query.filter || 'all');
+  const filterMode = EvalResultsFilterMode.parse(req.query.filterMode) ?? 'all';
   const searchText = req.query.search ? String(req.query.search) : '';
-  const metricFilter = req.query.metric ? String(req.query.metric) : '';
+  const filters = Array.isArray(req.query.filter)
+    ? req.query.filter
+    : typeof req.query.filter === 'string'
+      ? [req.query.filter]
+      : [];
 
   const comparisonEvalIds = Array.isArray(req.query.comparisonEvalIds)
     ? req.query.comparisonEvalIds
@@ -187,9 +193,9 @@ evalRouter.get('/:id/table', async (req: Request, res: Response): Promise<void> 
   const table = await eval_.getTablePage({
     offset,
     limit,
-    filterMode: filter as any,
+    filterMode,
     searchQuery: searchText,
-    metricFilter,
+    filters: filters as string[],
   });
 
   const indices = table.body.map((row) => row.testIdx);
@@ -197,7 +203,6 @@ evalRouter.get('/:id/table', async (req: Request, res: Response): Promise<void> 
   let returnTable = { head: table.head, body: table.body };
 
   if (comparisonEvalIds.length > 0) {
-    logger.debug(`Comparison eval IDs: ${JSON.stringify(comparisonEvalIds)}`);
     const comparisonEvals = await Promise.all(
       comparisonEvalIds.map(async (comparisonEvalId) => {
         const comparisonEval_ = await Eval.findById(comparisonEvalId as string);
@@ -219,7 +224,7 @@ evalRouter.get('/:id/table', async (req: Request, res: Response): Promise<void> 
           filterMode: 'all',
           testIndices: indices,
           searchQuery: searchText,
-          metricFilter,
+          filters: filters as string[],
         });
       }),
     );
@@ -271,6 +276,49 @@ evalRouter.get('/:id/table', async (req: Request, res: Response): Promise<void> 
   } as EvalTableDTO);
 });
 
+evalRouter.get('/:id/metadata-keys', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = ApiSchemas.Eval.MetadataKeys.Params.parse(req.params);
+    const { comparisonEvalIds = [] } = ApiSchemas.Eval.MetadataKeys.Query.parse(req.query);
+
+    const eval_ = await Eval.findById(id);
+    if (!eval_) {
+      res.status(404).json({ error: 'Eval not found' });
+      return;
+    }
+
+    // Validate that comparison evals exist
+    if (comparisonEvalIds.length > 0) {
+      const comparisonEvals = await Promise.all(
+        comparisonEvalIds.map((compId) => Eval.findById(compId)),
+      );
+      const missingEvals = comparisonEvalIds.filter((_, index) => !comparisonEvals[index]);
+      if (missingEvals.length > 0) {
+        res.status(400).json({
+          error: `Comparison evals not found: ${missingEvals.join(', ')}`,
+        });
+        return;
+      }
+    }
+
+    const keys = await EvalQueries.getMetadataKeysFromEval(id, comparisonEvalIds);
+
+    const response = ApiSchemas.Eval.MetadataKeys.Response.parse({ keys });
+    res.json(response);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: fromZodError(error).toString() });
+      return;
+    }
+
+    const { id } = req.params;
+    logger.error(
+      `Error fetching metadata keys for eval ${id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    res.status(500).json({ error: 'Failed to fetch metadata keys' });
+  }
+});
+
 evalRouter.post('/:id/results', async (req: Request, res: Response) => {
   const { id } = req.params;
   const results = req.body as unknown as EvalResult[];
@@ -292,6 +340,92 @@ evalRouter.post('/:id/results', async (req: Request, res: Response) => {
     return;
   }
   res.status(204).send();
+});
+
+evalRouter.post('/replay', async (req: Request, res: Response): Promise<void> => {
+  const { evaluationId, testIndex, prompt, variables } = req.body;
+
+  if (!evaluationId || !prompt) {
+    res.status(400).json({ error: 'Missing required parameters' });
+    return;
+  }
+
+  try {
+    // Load the evaluation to get the provider configuration
+    const eval_ = await Eval.findById(evaluationId);
+    if (!eval_) {
+      res.status(404).json({ error: 'Evaluation not found' });
+      return;
+    }
+
+    // Get the provider configuration from the eval
+    const providers = eval_.config.providers;
+    if (!providers) {
+      res.status(400).json({ error: 'No providers found in evaluation' });
+      return;
+    }
+
+    // Handle different provider config formats
+    let providerConfig: any;
+    if (Array.isArray(providers)) {
+      if (providers.length === 0) {
+        res.status(400).json({ error: 'No providers found in evaluation' });
+        return;
+      }
+      // Use the first provider or the one at the specified test index
+      providerConfig = providers[testIndex % providers.length];
+    } else if (typeof providers === 'string' || typeof providers === 'function') {
+      providerConfig = providers;
+    } else {
+      // providers might be a single provider object
+      providerConfig = providers;
+    }
+
+    // Run the prompt through the provider
+    const result = await promptfoo.evaluate(
+      {
+        prompts: [
+          {
+            raw: prompt,
+            label: 'Replay', // Add required label field
+          },
+        ],
+        providers: [providerConfig],
+        tests: [
+          {
+            vars: variables || {},
+          },
+        ],
+      },
+      {
+        maxConcurrency: 1,
+        showProgressBar: false,
+        eventSource: 'web',
+        cache: false, // Always disable cache for replays to get fresh results
+      },
+    );
+
+    const summary = await result.toEvaluateSummary();
+
+    // Better output extraction - handle different response structures
+    const firstResult = summary.results[0];
+    let output = firstResult?.response?.output;
+
+    // If still no output, try the raw response
+    if (!output && firstResult?.response?.raw) {
+      output = firstResult.response.raw;
+    }
+
+    // Return both output and any error information for debugging
+    res.json({
+      output: output || '',
+      error: firstResult?.response?.error,
+      response: firstResult?.response, // Include full response for debugging
+    });
+  } catch (error) {
+    logger.error(`Failed to replay evaluation: ${error}`);
+    res.status(500).json({ error: 'Failed to replay evaluation' });
+  }
 });
 
 evalRouter.post(
@@ -406,5 +540,23 @@ evalRouter.delete('/:id', async (req: Request, res: Response): Promise<void> => 
     res.json({ message: 'Eval deleted successfully' });
   } catch {
     res.status(500).json({ error: 'Failed to delete eval' });
+  }
+});
+
+/**
+ * Bulk delete evals.
+ */
+evalRouter.delete('/', (req: Request, res: Response) => {
+  const ids = req.body.ids;
+  if (!Array.isArray(ids)) {
+    res.status(400).json({ error: 'Ids must be an array' });
+    return;
+  }
+
+  try {
+    deleteEvals(ids);
+    res.status(204).send();
+  } catch {
+    res.status(500).json({ error: 'Failed to delete evals' });
   }
 });

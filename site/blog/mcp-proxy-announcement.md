@@ -2,13 +2,15 @@
 title: 'The Promptfoo MCP Proxy: Enterprise MCP Security'
 description: 'Learn about the security risks introduced by MCP servers and how to mitigate them using the Promptfoo MCP Proxy, an enterprise solution for MCP security.'
 authors: [steve]
-tags: [mcp, security, enterprise, proxy]
+tags: [company-update, integration, mcp]
 date: 2025-07-14
 image: /img/blog/mcp/mcp-proxy-hero.png
 ---
 
 Model Context Protocol (MCP) adoption is skyrocketing, [NPM installations are up to 4.7m](https://www.npmjs.com/package/@modelcontextprotocol/sdk) for the week of July 7th, 2025. Today we're announcing the Promptfoo MCP Proxy to manage the security risks for enterprises using MCP servers.
 MCP servers aren't inherently insecure, but the way they're being used creates huge vulnerabilities. Through our work with some of the world's largest companies, we've discovered alarmingly insecure patterns.
+
+<!-- truncate -->
 
 ## What Are MCP Servers?
 

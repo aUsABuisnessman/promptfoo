@@ -1,5 +1,6 @@
 ---
 sidebar_position: 1
+description: "Configure OpenAI's GPT models including GPT-4o, o1, GPT-3.5, embeddings, and assistants for comprehensive AI evaluations"
 ---
 
 # OpenAI
@@ -29,6 +30,19 @@ The `openai:<endpoint>:<model name>` construction is useful if OpenAI releases a
 or if you have a custom model.
 For example, if OpenAI releases `gpt-5` chat completion,
 you could begin using it immediately with `openai:chat:gpt-5`.
+
+```yaml title="GPT-5 only: verbosity and minimal reasoning"
+providers:
+  - id: openai:chat:gpt-5
+    config:
+      verbosity: high # low | medium | high
+      reasoning_effort: minimal
+  # For the Responses API, use a nested reasoning object:
+  - id: openai:responses:gpt-5
+    config:
+      reasoning:
+        effort: minimal
+```
 
 The OpenAI provider supports a handful of [configuration options](https://github.com/promptfoo/promptfoo/blob/main/src/providers/openai.ts#L14-L32), such as `temperature`, `functions`, and `tools`, which can be used to customize the behavior of the model like so:
 
@@ -74,6 +88,7 @@ Supported parameters include:
 | `functionToolCallbacks` | A map of function tool names to function callbacks. Each callback should accept a string and return a string or a `Promise<string>`.                                                                                                                                                              |
 | `headers`               | Additional headers to include in the request.                                                                                                                                                                                                                                                     |
 | `max_tokens`            | Controls the maximum length of the output in tokens. Not valid for reasoning models (o1, o3, o3-pro, o3-mini, o4-mini).                                                                                                                                                                           |
+| `maxRetries`            | Maximum number of retry attempts for failed API requests. Defaults to 4. Set to 0 to disable retries.                                                                                                                                                                                             |
 | `metadata`              | Key-value pairs for request tagging and organization.                                                                                                                                                                                                                                             |
 | `organization`          | Your OpenAI organization key.                                                                                                                                                                                                                                                                     |
 | `passthrough`           | A flexible object that allows passing arbitrary parameters directly to the OpenAI API request body. Useful for experimental, new, or provider-specific parameters not yet explicitly supported in promptfoo. This parameter is merged into the final API request and can override other settings. |
@@ -131,6 +146,7 @@ interface OpenAiConfig {
   apiBaseUrl?: string;
   organization?: string;
   headers?: { [key: string]: string };
+  maxRetries?: number;
 }
 ```
 
@@ -204,24 +220,6 @@ Reasoning models "think before they answer," generating internal reasoning token
 - Occupy space in the context window
 
 Both `o1` and `o3-mini` models have a 128,000 token context window, while `o3-pro` and `o4-mini` have a 200,000 token context window. OpenAI recommends reserving at least 25,000 tokens for reasoning and outputs when starting with these models.
-
-### GPT-4.5 Models (Preview)
-
-GPT-4.5 is OpenAI's largest GPT model designed specifically for creative tasks and agentic planning, currently available in a research preview. It features a 128k token context length.
-
-Models in this series include:
-
-- `gpt-4.5-preview`
-- `gpt-4.5-preview-2025-02-27`
-
-You can specify the model name in the `providers` section:
-
-```yaml title="promptfooconfig.yaml"
-providers:
-  - id: openai:gpt-4.5-preview
-    config:
-      temperature: 0.7
-```
 
 ## Images
 
@@ -707,39 +705,40 @@ module.exports = /** @type {import('promptfoo').TestSuiteConfig} */ ({
   providers: [
     {
       id: 'openai:assistant:asst_fEhNN3MClMamLfKLkIaoIpgZ',
-      config:
-        /** @type {InstanceType<import('promptfoo')["providers"]["OpenAiAssistantProvider"]>["config"]} */ ({
-          model: 'gpt-4.1',
-          instructions: 'You can add two numbers together using the `addNumbers` tool',
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: 'addNumbers',
-                description: 'Add two numbers together',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    a: { type: 'number' },
-                    b: { type: 'number' },
-                  },
-                  required: ['a', 'b'],
+      config: {
+        model: 'gpt-4.1',
+        instructions: 'You can add two numbers together using the `addNumbers` tool',
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'addNumbers',
+              description: 'Add two numbers together',
+              parameters: {
+                type: 'object',
+                properties: {
+                  a: { type: 'number' },
+                  b: { type: 'number' },
                 },
+                required: ['a', 'b'],
+                additionalProperties: false,
               },
-            },
-          ],
-          /**
-           * Map of function tool names to function callback.
-           */
-          functionToolCallbacks: {
-            // this function should accept a string, and return a string
-            // or a `Promise<string>`.
-            addNumbers: (parametersJsonString) => {
-              const { a, b } = JSON.parse(parametersJsonString);
-              return JSON.stringify(a + b);
+              strict: true,
             },
           },
-        }),
+        ],
+        /**
+         * Map of function tool names to function callback.
+         */
+        functionToolCallbacks: {
+          // this function should accept a JSON-parsed value, and return a string
+          // or a `Promise<string>`.
+          addNumbers: (parameters) => {
+            const { a, b } = parameters;
+            return JSON.stringify(a + b);
+          },
+        },
+      },
     },
   ],
   tests: [
@@ -840,6 +839,11 @@ providers:
       instructions: 'You are a helpful assistant.'
       temperature: 0.7
       websocketTimeout: 60000 # 60 seconds
+      # Optional: point to custom/proxy endpoints; WS URL is derived automatically
+      # https:// → wss://, http:// → ws://
+      # Example: wss://my-custom-api.com/v1/realtime
+      # Example: ws://localhost:8080/v1/realtime
+      # apiBaseUrl: 'https://my-custom-api.com/v1'
 ```
 
 ### Realtime-specific Configuration Options
@@ -857,6 +861,23 @@ The Realtime API configuration supports these parameters in addition to standard
 | `max_response_output_tokens` | Maximum tokens in model response                    | 'inf'                  | Number or 'inf'                         |
 | `tools`                      | Array of tool definitions for function calling      | []                     | Array of tool objects                   |
 | `tool_choice`                | Controls how tools are selected                     | 'auto'                 | 'none', 'auto', 'required', or object   |
+
+#### Custom endpoints and proxies (Realtime)
+
+The Realtime provider respects the same base URL configuration as other OpenAI providers. The WebSocket URL is derived from `getApiUrl()` by converting protocols: `https://` → `wss://` and `http://` → `ws://`.
+
+You can use this to target Azure-compatible endpoints, proxies, or local/dev servers:
+
+```yaml
+providers:
+  - id: openai:realtime:gpt-4o-realtime-preview
+    config:
+      apiBaseUrl: 'https://my-custom-api.com/v1' # connects to wss://my-custom-api.com/v1/realtime
+      modalities: ['text']
+      temperature: 0.7
+```
+
+Environment variables `OPENAI_API_BASE_URL` and `OPENAI_BASE_URL` also apply to Realtime WebSocket connections.
 
 ### Function Calling with Realtime API
 
@@ -940,6 +961,7 @@ The Responses API supports a wide range of models, including:
 - `o3-mini` - Smaller, more affordable reasoning model
 - `o4-mini` - Latest fast, cost-effective reasoning model
 - `codex-mini-latest` - Fast reasoning model optimized for the Codex CLI
+- `gpt-5-codex` - GPT-5 based coding model optimized for code generation
 
 ### Using the Responses API
 
@@ -1141,6 +1163,132 @@ providers:
       max_output_tokens: 1000
 ```
 
+### Deep Research Models (Responses API Only)
+
+Deep research models (`o3-deep-research`, `o4-mini-deep-research`) are specialized reasoning models designed for complex research tasks that require web search capabilities.
+
+Available models:
+
+- `o3-deep-research` - Most powerful deep research model ($10/1M input, $40/1M output)
+- `o3-deep-research-2025-06-26` - Snapshot version
+- `o4-mini-deep-research` - Faster, more affordable ($2/1M input, $8/1M output)
+- `o4-mini-deep-research-2025-06-26` - Snapshot version
+
+All deep research models:
+
+- **Require** `web_search_preview` tool to be configured
+- Support 200,000 token context window
+- Support up to 100,000 output tokens
+- May take 2-10 minutes to complete research tasks
+- Use significant tokens for reasoning before generating output
+
+Example configuration:
+
+```yaml title="promptfooconfig.yaml"
+providers:
+  - id: openai:responses:o4-mini-deep-research
+    config:
+      max_output_tokens: 50000 # High limit recommended
+      tools:
+        - type: web_search_preview # Required
+```
+
+#### Advanced Configuration
+
+```yaml title="promptfooconfig.yaml"
+providers:
+  - id: openai:responses:o3-deep-research
+    config:
+      max_output_tokens: 100000
+      max_tool_calls: 50 # Limit searches to control cost/latency
+      background: true # Recommended for long-running tasks
+      store: true # Store conversation for 30 days
+      tools:
+        - type: web_search_preview # Required
+        - type: code_interpreter # Optional: For data analysis
+          container:
+            type: auto
+        - type: mcp # Optional: Connect to private data
+          server_label: mycompany_data
+          server_url: https://api.mycompany.com/mcp
+          require_approval: never # Must be 'never' for deep research
+```
+
+#### Response Format
+
+Deep research models return specialized output items:
+
+- **web_search_call**: Web search actions (search, open_page, find_in_page)
+- **code_interpreter_call**: Code execution for analysis
+- **message**: Final answer with inline citations and annotations
+
+Example response structure:
+
+```json
+{
+  "output": [
+    {
+      "type": "web_search_call",
+      "action": {
+        "type": "search",
+        "query": "latest AI research papers 2025"
+      }
+    },
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Based on my research...",
+          "annotations": [
+            {
+              "url": "https://arxiv.org/...",
+              "title": "Paper Title",
+              "start_index": 123,
+              "end_index": 145
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Best Practices
+
+1. **Use Background Mode**: For production, always use `background: true` to handle long response times
+2. **Set High Token Limits**: Use `max_output_tokens: 50000` or higher
+3. **Configure Timeouts**: Set `PROMPTFOO_EVAL_TIMEOUT_MS=600000` for 10-minute timeouts
+4. **Control Costs**: Use `max_tool_calls` to limit the number of searches
+5. **Enhance Prompts**: Consider using a faster model to clarify/rewrite prompts before deep research
+
+#### Timeout Configuration
+
+Deep research models automatically use appropriate timeouts:
+
+- If `PROMPTFOO_EVAL_TIMEOUT_MS` is set, it will be used for the API call
+- Otherwise, deep research models default to a 10-minute timeout (600,000ms)
+- Regular models continue to use the standard 5-minute timeout
+
+Example:
+
+```bash
+# Set a custom timeout for all evaluations
+export PROMPTFOO_EVAL_TIMEOUT_MS=900000  # 15 minutes
+
+# Or set the default API timeout (affects all providers)
+export REQUEST_TIMEOUT_MS=600000  # 10 minutes
+```
+
+:::tip
+Deep research models require high `max_output_tokens` values (50,000+) and long timeouts. Set `PROMPTFOO_EVAL_TIMEOUT_MS=600000` for 10-minute timeouts.
+:::
+
+:::warning
+The `web_search_preview` tool is **required** for deep research models. The provider will return an error if this tool is not configured.
+:::
+
 ### Sending Images in Prompts
 
 The Responses API supports structured prompts with text and image inputs. Example:
@@ -1188,6 +1336,23 @@ providers:
               required: ['location']
       tool_choice: 'auto'
 ```
+
+### Using with Azure
+
+The Responses API can also be used with Azure OpenAI endpoints by configuring the `apiHost`:
+
+```yaml
+providers:
+  - id: openai:responses:gpt-4.1
+    config:
+      apiHost: 'your-resource.openai.azure.com'
+      apiKey: '${AZURE_API_KEY}'
+      temperature: 0.7
+      instructions: 'You are a helpful assistant.'
+      response_format: file://./response-schema.json
+```
+
+For comprehensive Azure Responses API documentation, see the [Azure provider documentation](/docs/providers/azure#azure-responses-api).
 
 ### Complete Example
 

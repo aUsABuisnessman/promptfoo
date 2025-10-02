@@ -1,4 +1,5 @@
 import React from 'react';
+
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import Accordion from '@mui/material/Accordion';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -6,8 +7,8 @@ import AccordionSummary from '@mui/material/AccordionSummary';
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import type { ProviderOptions } from '@promptfoo/types';
 import ExtensionEditor from './ExtensionEditor';
+import type { ProviderOptions } from '@promptfoo/types';
 import 'prismjs/themes/prism.css';
 
 interface CommonConfigurationOptionsProps {
@@ -18,13 +19,13 @@ interface CommonConfigurationOptionsProps {
   onExtensionsChange?: (extensions: string[]) => void;
 }
 
-const CommonConfigurationOptions: React.FC<CommonConfigurationOptionsProps> = ({
+const CommonConfigurationOptions = ({
   selectedTarget,
   updateCustomTarget,
   onValidationChange,
   extensions = [],
   onExtensionsChange,
-}) => {
+}: CommonConfigurationOptionsProps) => {
   const handleExtensionsChange = React.useCallback(
     (newExtensions: string[]) => {
       onExtensionsChange?.(newExtensions);

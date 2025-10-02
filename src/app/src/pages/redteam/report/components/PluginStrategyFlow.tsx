@@ -1,9 +1,11 @@
 // PluginStrategyFlow.tsx
+
 import React, { useMemo } from 'react';
+
 import { useTheme } from '@mui/material/styles';
 import { displayNameOverrides } from '@promptfoo/redteam/constants';
 import { type EvaluateResult, type GradingResult } from '@promptfoo/types';
-import { Sankey, Tooltip, ResponsiveContainer, Layer, Rectangle } from 'recharts';
+import { Layer, Rectangle, ResponsiveContainer, Sankey, Tooltip } from 'recharts';
 import { getPluginIdFromResult, getStrategyIdFromTest } from './shared';
 
 interface TestRecord {
@@ -133,11 +135,11 @@ const CustomLink = (props: any) => {
   );
 };
 
-const PluginStrategyFlow: React.FC<PluginStrategyFlowProps> = ({
+const PluginStrategyFlow = ({
   failuresByPlugin,
   passesByPlugin,
   strategyStats,
-}) => {
+}: PluginStrategyFlowProps) => {
   // Extract plugin -> strategy -> outcome mappings from the test records
   const data = useMemo(() => {
     // We'll aggregate counts of tests by (plugin, strategy, outcome)

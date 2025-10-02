@@ -1,14 +1,16 @@
 import { fetchWithCache } from '../cache';
 import { getEnvString } from '../envars';
 import logger from '../logger';
+import { maybeLoadToolsFromExternalFile } from '../util/index';
+import { parseChatPrompt, REQUEST_TIMEOUT_MS } from './shared';
+
 import type {
   ApiProvider,
   CallApiContextParams,
   ProviderEmbeddingResponse,
   ProviderResponse,
-} from '../types';
-import { maybeLoadToolsFromExternalFile } from '../util';
-import { REQUEST_TIMEOUT_MS, parseChatPrompt } from './shared';
+  TokenUsage,
+} from '../types/index';
 
 interface OllamaCompletionOptions {
   // From https://github.com/jmorganca/ollama/blob/v0.1.0/api/types.go#L161
@@ -46,6 +48,8 @@ interface OllamaCompletionOptions {
   stop?: string[];
   num_thread?: number;
   tools?: any[]; // Support for function calling/tools
+  think?: boolean; // Top-level parameter for thinking/reasoning
+  passthrough?: Record<string, any>; // Pass arbitrary fields to the API
 }
 
 const OllamaCompletionOptionKeys = new Set<keyof OllamaCompletionOptions>([
@@ -83,6 +87,8 @@ const OllamaCompletionOptionKeys = new Set<keyof OllamaCompletionOptions>([
   'stop',
   'num_thread',
   'tools',
+  'think',
+  'passthrough',
 ]);
 
 interface OllamaCompletionJsonL {
@@ -149,18 +155,27 @@ export class OllamaCompletionProvider implements ApiProvider {
       options: Object.keys(this.config).reduce(
         (options, key) => {
           const optionName = key as keyof OllamaCompletionOptions;
-          if (OllamaCompletionOptionKeys.has(optionName)) {
+          if (
+            OllamaCompletionOptionKeys.has(optionName) &&
+            optionName !== 'think' &&
+            optionName !== 'tools' &&
+            optionName !== 'passthrough'
+          ) {
             options[optionName] = this.config[optionName];
           }
           return options;
         },
-        {} as Partial<
-          Record<keyof OllamaCompletionOptions, number | boolean | string[] | undefined>
-        >,
+        {} as Record<string, any>,
       ),
+      ...(this.config.think !== undefined ? { think: this.config.think } : {}),
+      ...(this.config.passthrough || {}),
     };
 
-    logger.debug(`Calling Ollama API: ${JSON.stringify(params)}`);
+    if (this.config.think !== undefined) {
+      params.think = this.config.think;
+    }
+
+    logger.debug('Calling Ollama API', { params });
     let response;
     try {
       response = await fetchWithCache(
@@ -191,11 +206,13 @@ export class OllamaCompletionProvider implements ApiProvider {
     }
 
     try {
-      const output = response.data
+      const lines = response.data
         .split('\n')
         .filter((line: string) => line.trim() !== '')
-        .map((line: string) => {
-          const parsed = JSON.parse(line) as OllamaCompletionJsonL;
+        .map((line: string) => JSON.parse(line) as OllamaCompletionJsonL);
+
+      const output = lines
+        .map((parsed: OllamaCompletionJsonL) => {
           if (parsed.response) {
             return parsed.response;
           }
@@ -204,8 +221,26 @@ export class OllamaCompletionProvider implements ApiProvider {
         .filter((s: string | null) => s !== null)
         .join('');
 
+      // Extract token usage from the final chunk (where done: true)
+      const finalChunk = lines.find((chunk: OllamaCompletionJsonL) => chunk.done);
+      let tokenUsage: Partial<TokenUsage> | undefined;
+
+      if (
+        finalChunk &&
+        (finalChunk.prompt_eval_count !== undefined || finalChunk.eval_count !== undefined)
+      ) {
+        const promptTokens = finalChunk.prompt_eval_count || 0;
+        const completionTokens = finalChunk.eval_count || 0;
+        tokenUsage = {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: promptTokens + completionTokens,
+        };
+      }
+
       return {
         output,
+        ...(tokenUsage && { tokenUsage }),
       };
     } catch (err) {
       return {
@@ -248,10 +283,10 @@ export class OllamaChatProvider implements ApiProvider {
           }
           return options;
         },
-        {} as Partial<
-          Record<keyof OllamaCompletionOptions, number | boolean | string[] | undefined>
-        >,
+        {} as Record<string, any>,
       ),
+      ...(this.config.think !== undefined ? { think: this.config.think } : {}),
+      ...(this.config.passthrough || {}),
     };
 
     // Handle tools if configured
@@ -259,7 +294,7 @@ export class OllamaChatProvider implements ApiProvider {
       params.tools = maybeLoadToolsFromExternalFile(this.config.tools, context?.vars);
     }
 
-    logger.debug(`Calling Ollama API: ${JSON.stringify(params)}`);
+    logger.debug('Calling Ollama API', { params });
     let response;
     try {
       response = await fetchWithCache(
@@ -291,11 +326,13 @@ export class OllamaChatProvider implements ApiProvider {
     }
 
     try {
-      const output = response.data
+      const lines = response.data
         .split('\n')
         .filter((line: string) => line.trim() !== '')
-        .map((line: string) => {
-          const parsed = JSON.parse(line) as OllamaChatJsonL;
+        .map((line: string) => JSON.parse(line) as OllamaChatJsonL);
+
+      const output = lines
+        .map((parsed: OllamaChatJsonL) => {
           if (parsed.message?.content) {
             return parsed.message.content;
           }
@@ -304,8 +341,26 @@ export class OllamaChatProvider implements ApiProvider {
         .filter((s: string | null) => s !== null)
         .join('');
 
+      // Extract token usage from the final chunk (where done: true)
+      const finalChunk = lines.find((chunk: OllamaChatJsonL) => chunk.done);
+      let tokenUsage: Partial<TokenUsage> | undefined;
+
+      if (
+        finalChunk &&
+        (finalChunk.prompt_eval_count !== undefined || finalChunk.eval_count !== undefined)
+      ) {
+        const promptTokens = finalChunk.prompt_eval_count || 0;
+        const completionTokens = finalChunk.eval_count || 0;
+        tokenUsage = {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: promptTokens + completionTokens,
+        };
+      }
+
       return {
         output,
+        ...(tokenUsage && { tokenUsage }),
       };
     } catch (err) {
       return {
@@ -322,7 +377,7 @@ export class OllamaEmbeddingProvider extends OllamaCompletionProvider {
       prompt: text,
     };
 
-    logger.debug(`Calling Ollama API: ${JSON.stringify(params)}`);
+    logger.debug('Calling Ollama API', { params });
     let response;
     try {
       response = await fetchWithCache(
@@ -345,7 +400,6 @@ export class OllamaEmbeddingProvider extends OllamaCompletionProvider {
         error: `API call error: ${String(err)}`,
       };
     }
-    logger.debug(`\tOllama embeddings API response: ${JSON.stringify(response.data)}`);
 
     try {
       const embedding = response.data.embedding as number[];

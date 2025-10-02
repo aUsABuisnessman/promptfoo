@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+
 import logoPanda from '@app/assets/logo.svg';
 import { usePageMeta } from '@app/hooks/usePageMeta';
 import useApiConfig from '@app/stores/apiConfig';
@@ -11,10 +11,10 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import Link from '@mui/material/Link';
 import Paper from '@mui/material/Paper';
+import { createTheme, styled, ThemeProvider } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
-import { styled } from '@mui/material/styles';
-import { createTheme, ThemeProvider } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
+import { useNavigate } from 'react-router-dom';
 import DarkModeToggle from '../../components/DarkMode';
 import { useApiHealth } from '../../hooks/useApiHealth';
 
@@ -46,7 +46,7 @@ const createAppTheme = (darkMode: boolean) =>
 
 const StyledPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(3),
-  borderRadius: theme.shape.borderRadius * 2,
+  borderRadius: (theme.shape.borderRadius as number) * 2,
   border: `1px solid ${theme.palette.divider}`,
   backgroundColor: 'transparent',
 }));
@@ -135,10 +135,21 @@ export default function LauncherPage() {
   }, [darkMode]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    // Simple delay to allow server startup, then start health checks
+    let interval: NodeJS.Timeout;
+    const timeout = setTimeout(() => {
       checkHealth();
-    }, 2000);
-    return () => clearInterval(interval);
+      interval = setInterval(() => {
+        checkHealth();
+      }, 2000);
+    }, 3000);
+
+    return () => {
+      clearTimeout(timeout);
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
   }, [checkHealth]);
 
   useEffect(() => {

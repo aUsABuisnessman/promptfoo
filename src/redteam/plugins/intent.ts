@@ -1,4 +1,10 @@
 import dedent from 'dedent';
+import { maybeLoadFromExternalFile } from '../../util/file';
+import invariant from '../../util/invariant';
+import { sleep } from '../../util/time';
+import { extractGoalFromPrompt } from '../util';
+import { RedteamGraderBase, RedteamPluginBase } from './base';
+
 import type {
   ApiProvider,
   Assertion,
@@ -6,12 +12,7 @@ import type {
   GradingResult,
   PluginConfig,
   TestCase,
-} from '../../types';
-import { maybeLoadFromExternalFile } from '../../util/file';
-import invariant from '../../util/invariant';
-import { sleep } from '../../util/time';
-import { extractGoalFromPrompt } from '../util';
-import { RedteamGraderBase, RedteamPluginBase } from './base';
+} from '../../types/index';
 
 const PLUGIN_ID = 'promptfoo:redteam:intent';
 

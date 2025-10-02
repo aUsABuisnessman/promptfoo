@@ -1,28 +1,29 @@
-import React, { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo } from 'react';
+
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
-import Typography from '@mui/material/Typography';
 import { alpha, useTheme } from '@mui/material/styles';
+import Typography from '@mui/material/Typography';
 import {
   DataGrid,
   type GridColDef,
+  GridCsvExportMenuItem,
+  type GridExportMenuItemProps,
+  GridPrintExportMenuItem,
   type GridRenderCellParams,
-  GridToolbarContainer,
   GridToolbarColumnsButton,
-  GridToolbarFilterButton,
+  GridToolbarContainer,
   GridToolbarDensitySelector,
   GridToolbarExportContainer,
-  GridCsvExportMenuItem,
-  GridPrintExportMenuItem,
+  GridToolbarFilterButton,
   GridToolbarQuickFilter,
-  type GridExportMenuItemProps,
-  useGridApiContext,
   gridFilteredSortedRowIdsSelector,
   gridVisibleColumnFieldsSelector,
+  useGridApiContext,
 } from '@mui/x-data-grid';
+import { Link } from 'react-router-dom';
 import type { StandaloneEval } from '@promptfoo/util/database';
 
 function JsonExportMenuItem(props: GridExportMenuItemProps<{}>) {
@@ -117,7 +118,18 @@ export default function History({
         flex: 2,
         minWidth: 120,
         renderCell: (params: GridRenderCellParams<StandaloneEval>) => (
-          <Link to={`/eval?evalId=${params.value || ''}`}>{params.value}</Link>
+          <Link to={`/eval?evalId=${params.value || ''}`} style={{ textDecoration: 'none' }}>
+            <Typography
+              variant="body2"
+              color="primary"
+              fontFamily="monospace"
+              sx={{
+                '&:hover': { textDecoration: 'underline' },
+              }}
+            >
+              {params.value}
+            </Typography>
+          </Link>
         ),
       },
       ...(showDatasetColumn
@@ -128,7 +140,18 @@ export default function History({
               flex: 0.5,
               minWidth: 100,
               renderCell: (params: GridRenderCellParams<StandaloneEval>) => (
-                <Link to={`/datasets?id=${params.value || ''}`}>{params.value?.slice(0, 6)}</Link>
+                <Link to={`/datasets?id=${params.value || ''}`} style={{ textDecoration: 'none' }}>
+                  <Typography
+                    variant="body2"
+                    color="primary"
+                    fontFamily="monospace"
+                    sx={{
+                      '&:hover': { textDecoration: 'underline' },
+                    }}
+                  >
+                    {params.value?.slice(0, 6)}
+                  </Typography>
+                </Link>
               ),
             },
           ]
@@ -149,8 +172,20 @@ export default function History({
           `[${row.promptId?.slice(0, 6)}]: ${row.raw}`,
         renderCell: (params: GridRenderCellParams<StandaloneEval>) => (
           <>
-            <Link to={`/prompts?id=${params.row.promptId || ''}`}>
-              [{params.row.promptId?.slice(0, 6)}]
+            <Link
+              to={`/prompts?id=${params.row.promptId || ''}`}
+              style={{ textDecoration: 'none' }}
+            >
+              <Typography
+                variant="body2"
+                color="primary"
+                fontFamily="monospace"
+                sx={{
+                  '&:hover': { textDecoration: 'underline' },
+                }}
+              >
+                [{params.row.promptId?.slice(0, 6)}]
+              </Typography>
             </Link>
             <span style={{ marginLeft: 4 }}>{params.row.raw}</span>
           </>
@@ -219,6 +254,7 @@ export default function History({
   return (
     <Box
       sx={{
+        position: 'absolute',
         top: 64,
         left: 0,
         right: 0,
@@ -307,7 +343,6 @@ export default function History({
           sx={{
             border: 'none',
             '& .MuiDataGrid-row': {
-              cursor: 'pointer',
               transition: 'background-color 0.2s ease',
               '&:hover': {
                 backgroundColor: 'action.hover',
@@ -322,6 +357,10 @@ export default function History({
               backgroundColor: 'background.default',
               borderColor: 'divider',
             },
+            '& .MuiDataGrid-selectedRow': {
+              backgroundColor: 'action.selected',
+            },
+            '--DataGrid-overlayHeight': '300px',
           }}
           initialState={{
             sorting: {

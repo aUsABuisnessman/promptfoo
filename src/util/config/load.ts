@@ -1,24 +1,24 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import process from 'process';
+
 import $RefParser from '@apidevtools/json-schema-ref-parser';
 import chalk from 'chalk';
 import dedent from 'dedent';
-import * as fs from 'fs';
 import { globSync } from 'glob';
 import yaml from 'js-yaml';
-import * as path from 'path';
-import process from 'process';
 import { fromError } from 'zod-validation-error';
-import { readAssertions } from '../../assertions';
+import { readAssertions } from '../../assertions/index';
 import { validateAssertions } from '../../assertions/validateAssertions';
 import cliState from '../../cliState';
 import { filterTests } from '../../commands/eval/filterTests';
 import { getEnvBool, isCI } from '../../envars';
 import { importModule } from '../../esm';
 import logger from '../../logger';
-import { readPrompts, readProviderPromptMap } from '../../prompts';
-import { loadApiProviders } from '../../providers';
+import { readPrompts, readProviderPromptMap } from '../../prompts/index';
+import { loadApiProviders } from '../../providers/index';
 import telemetry from '../../telemetry';
 import {
-  UnifiedConfigSchema,
   type CommandLineOptions,
   type Prompt,
   type ProviderOptions,
@@ -28,8 +28,10 @@ import {
   type TestCase,
   type TestSuite,
   type UnifiedConfig,
-} from '../../types';
-import { isRunningUnderNpx, readFilters } from '../../util';
+  UnifiedConfigSchema,
+} from '../../types/index';
+import { readFilters } from '../../util/index';
+import { promptfooCommand } from '../promptfooCommand';
 import { maybeLoadFromExternalFile } from '../../util/file';
 import { isJavascriptFile } from '../../util/fileExtensions';
 import invariant from '../../util/invariant';
@@ -245,9 +247,11 @@ export async function combineConfigs(configPaths: string[]): Promise<UnifiedConf
   const configs: UnifiedConfig[] = [];
   for (const configPath of configPaths) {
     const resolvedPath = path.resolve(process.cwd(), configPath);
+
     const globPaths = globSync(resolvedPath, {
       windowsPathsNoEscape: true,
     });
+
     if (globPaths.length === 0) {
       throw new Error(`No configuration file found at ${configPath}`);
     }
@@ -462,7 +466,7 @@ export async function combineConfigs(configPaths: string[]): Promise<UnifiedConf
       }
 
       const sharingConfig = configs.find((config) => typeof config.sharing === 'object');
-      return sharingConfig ? sharingConfig.sharing : true;
+      return sharingConfig ? sharingConfig.sharing : false;
     })(),
     tracing: configs.find((config) => config.tracing)?.tracing,
   };
@@ -478,7 +482,12 @@ export async function resolveConfigs(
   cmdObj: Partial<CommandLineOptions>,
   _defaultConfig: Partial<UnifiedConfig>,
   type?: 'DatasetGeneration' | 'AssertionGeneration',
-): Promise<{ testSuite: TestSuite; config: Partial<UnifiedConfig>; basePath: string }> {
+): Promise<{
+  testSuite: TestSuite;
+  config: Partial<UnifiedConfig>;
+  basePath: string;
+  commandLineOptions?: Partial<CommandLineOptions>;
+}> {
   let fileConfig: Partial<UnifiedConfig> = {};
   let defaultConfig = _defaultConfig;
   const configPaths = cmdObj.config;
@@ -542,7 +551,7 @@ export async function resolveConfigs(
     processedDefaultTest = defaultTestRaw as Partial<TestCase>;
   }
 
-  const config: Omit<UnifiedConfig, 'evaluateOptions' | 'commandLineOptions'> = {
+  const config: Omit<UnifiedConfig, 'commandLineOptions'> = {
     tags: fileConfig.tags || defaultConfig.tags,
     description: cmdObj.description || fileConfig.description || defaultConfig.description,
     prompts: cmdObj.prompts || fileConfig.prompts || defaultConfig.prompts || [],
@@ -552,14 +561,17 @@ export async function resolveConfigs(
     env: fileConfig.env || defaultConfig.env,
     sharing: getEnvBool('PROMPTFOO_DISABLE_SHARING')
       ? false
-      : (fileConfig.sharing ?? defaultConfig.sharing ?? true),
-    defaultTest: processedDefaultTest ? await readTest(processedDefaultTest, basePath) : undefined,
+      : (fileConfig.sharing ?? defaultConfig.sharing ?? false),
+    defaultTest: processedDefaultTest
+      ? await readTest(processedDefaultTest, basePath, true)
+      : undefined,
     derivedMetrics: fileConfig.derivedMetrics || defaultConfig.derivedMetrics,
     outputPath: cmdObj.output || fileConfig.outputPath || defaultConfig.outputPath,
     extensions: fileConfig.extensions || defaultConfig.extensions || [],
     metadata: fileConfig.metadata || defaultConfig.metadata,
     redteam: fileConfig.redteam || defaultConfig.redteam,
     tracing: fileConfig.tracing || defaultConfig.tracing,
+    evaluateOptions: fileConfig.evaluateOptions || defaultConfig.evaluateOptions,
   };
 
   const hasPrompts = [config.prompts].flat().filter(Boolean).length > 0;
@@ -567,18 +579,16 @@ export async function resolveConfigs(
   const hasConfigFile = Boolean(configPaths);
 
   if (!hasConfigFile && !hasPrompts && !hasProviders && !isCI()) {
-    const runCommand = isRunningUnderNpx() ? 'npx promptfoo' : 'promptfoo';
-
     logger.warn(dedent`
       ${chalk.yellow.bold('⚠️  No promptfooconfig found')}
 
       ${chalk.white('Try running with:')}
 
-      ${chalk.cyan(`${runCommand} eval -c ${chalk.bold('path/to/promptfooconfig.yaml')}`)}
+      ${chalk.cyan(`${promptfooCommand('')} eval -c ${chalk.bold('path/to/promptfooconfig.yaml')}`)}
 
       ${chalk.white('Or create a config with:')}
 
-      ${chalk.green(`${runCommand} init`)}
+      ${chalk.green(promptfooCommand('init'))}
     `);
     process.exit(1);
   }
@@ -693,5 +703,22 @@ export async function resolveConfigs(
   }
 
   cliState.config = config;
-  return { config, testSuite, basePath };
+
+  // Extract commandLineOptions from either explicit config files or default config
+  let commandLineOptions = fileConfig.commandLineOptions || defaultConfig.commandLineOptions;
+
+  // Resolve relative envPath against the config file directory
+  if (commandLineOptions?.envPath && !path.isAbsolute(commandLineOptions.envPath) && basePath) {
+    commandLineOptions = {
+      ...commandLineOptions,
+      envPath: path.resolve(basePath, commandLineOptions.envPath),
+    };
+  }
+
+  return {
+    config,
+    testSuite,
+    basePath,
+    commandLineOptions,
+  };
 }

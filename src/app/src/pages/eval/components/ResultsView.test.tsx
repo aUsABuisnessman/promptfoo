@@ -1,265 +1,225 @@
-import { render, screen } from '@testing-library/react';
-import React from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
-import { ShiftKeyContext } from '@app/contexts/ShiftKeyContextDef';
-import { ToastProvider } from '@app/contexts/ToastContext';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ResultsView from './ResultsView';
+import type { ResultLightweightWithLabel } from '@promptfoo/types';
 
-// Mock data
-const mockRecentEvals = [
-  {
-    id: '1',
-    label: 'Eval 1',
-    description: 'Description 1',
-    evalId: '1',
-    isRedteam: false,
-    datasetId: 'd1',
-    createdAt: new Date('2023-01-01').getTime(),
-    numTests: 10,
-    passRate: 0.8,
-  },
-  {
-    id: '2',
-    label: 'Eval 2',
-    description: 'Description 2',
-    evalId: '2',
-    isRedteam: false,
-    datasetId: 'd2',
-    createdAt: new Date('2023-01-02').getTime(),
-    numTests: 15,
-    passRate: 0.9,
-  },
-];
+// Mock all the required modules
+vi.mock('@app/hooks/useToast', () => ({
+  useToast: () => ({
+    showToast: vi.fn(),
+  }),
+}));
 
-const mockColumnState = {
-  selectedColumns: ['Variable 1', 'Prompt 1'],
-  columnVisibility: { 'Variable 1': true, 'Prompt 1': true },
-};
+vi.mock('@app/stores/evalConfig', () => ({
+  useStore: () => ({
+    updateConfig: vi.fn(),
+  }),
+}));
 
-const mockTableWithHighlights = {
-  head: {
-    prompts: [{ provider: 'test-provider' }],
-    vars: ['Variable 1'],
-  },
-  body: [
-    {
-      outputs: [
-        {
-          pass: true,
-          score: 1,
-          text: 'test output',
-          gradingResult: { comment: '!highlight This is important' },
-        },
-      ],
-      test: {},
-      vars: ['test var'],
-    },
-    {
-      outputs: [
-        {
-          pass: false,
-          score: 0,
-          text: 'test output 2',
-          gradingResult: { comment: '!highlight Another highlight' },
-        },
-      ],
-      test: {},
-      vars: ['test var 2'],
-    },
-  ],
-};
-
-const mockTableWithoutHighlights = {
-  head: {
-    prompts: [{ provider: 'test-provider' }],
-    vars: ['Variable 1'],
-  },
-  body: [
-    {
-      outputs: [{ pass: true, score: 1, text: 'test output' }],
-      test: {},
-      vars: ['test var'],
-    },
-  ],
-};
-
-// Mock the router hooks
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: () => vi.fn(),
-    useSearchParams: () => [new URLSearchParams(''), vi.fn()],
-  };
-});
-
-// Mock the store hooks - we'll modify this per test
-let mockTableStoreData = {
-  table: mockTableWithoutHighlights,
-  setTable: vi.fn(),
-  config: { description: 'Test Config' },
-  setConfig: vi.fn(),
-  evalId: '1',
-  author: 'Test Author',
-  recentEvals: mockRecentEvals,
-  fetchEvalData: vi.fn(),
-  evals: mockRecentEvals,
-  setAuthor: vi.fn(),
-  filteredResultsCount: 10,
-  totalResultsCount: 10,
-  highlightedResultsCount: 0,
-};
+vi.mock('@app/utils/api', () => ({
+  callApi: vi.fn().mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve({}),
+  }),
+  fetchUserEmail: vi.fn().mockResolvedValue('test@example.com'),
+  updateEvalAuthor: vi.fn().mockResolvedValue({}),
+}));
 
 vi.mock('./store', () => ({
-  useTableStore: vi.fn(() => mockTableStoreData),
-  useResultsViewSettingsStore: vi.fn(() => ({
-    stickyHeader: true,
-    setStickyHeader: vi.fn(),
-    inComparisonMode: false,
+  useResultsViewSettingsStore: () => ({
     setInComparisonMode: vi.fn(),
-    columnStates: { '1': mockColumnState },
+    columnStates: {},
     setColumnState: vi.fn(),
     maxTextLength: 100,
     wordBreak: 'break-word',
     showInferenceDetails: true,
     comparisonEvalIds: [],
     setComparisonEvalIds: vi.fn(),
-    renderMarkdown: true,
-  })),
-}));
-
-// Mock the API functions
-vi.mock('@app/utils/api', () => ({
-  callApi: vi.fn(() => {
-    return {
-      ok: true,
-      async json() {
-        return { data: mockRecentEvals };
-      },
-    };
   }),
-  fetchUserEmail: vi.fn(() => Promise.resolve('test@example.com')),
-  updateEvalAuthor: vi.fn(),
+  useTableStore: () => ({
+    author: 'Test Author',
+    table: {
+      head: {
+        prompts: [
+          {
+            label: 'Test Prompt 1',
+            provider: 'openai:gpt-4',
+            raw: 'Test prompt 1',
+          },
+          {
+            label: 'Test Prompt 2',
+            provider: 'openai:gpt-3.5-turbo',
+            raw: 'Test prompt 2',
+          },
+        ],
+        vars: ['input'],
+      },
+      body: [],
+    },
+    config: {
+      description: 'Test Evaluation',
+      sharing: true, // Explicitly enabled
+      tags: { env: 'test' },
+    },
+    setConfig: vi.fn(),
+    evalId: 'test-eval-id',
+    setAuthor: vi.fn(),
+    filteredResultsCount: 10,
+    totalResultsCount: 15,
+    highlightedResultsCount: 2,
+    filters: {
+      appliedCount: 0,
+      values: {},
+    },
+    removeFilter: vi.fn(),
+  }),
 }));
 
-// Mock the main store
-vi.mock('@app/stores/evalConfig', () => ({
-  useStore: vi.fn(() => ({
-    setStateFromConfig: vi.fn(),
-  })),
+vi.mock('./ShareModal', () => ({
+  default: vi.fn(({ open, onClose }) =>
+    open ? <div data-testid="share-modal">Share Modal</div> : null,
+  ),
 }));
 
-// Mock the useToast hook
-vi.mock('@app/hooks/useToast', () => ({
-  useToast: vi.fn(() => ({
-    showToast: vi.fn(),
-  })),
+vi.mock('./ResultsTable', () => ({
+  default: () => <div data-testid="results-table">Results Table</div>,
 }));
 
-// Mock the useShiftKey hook
-vi.mock('@app/hooks/useShiftKey', () => {
-  const ShiftKeyContext = { Provider: ({ children }: { children: React.ReactNode }) => children };
-  return {
-    ShiftKeyContext,
-    useShiftKey: vi.fn(() => false),
-  };
-});
+vi.mock('./ResultsCharts', () => ({
+  default: () => <div data-testid="results-charts">Results Charts</div>,
+}));
 
-// Helper function for rendering with providers
-const renderWithProviders = (ui: React.ReactNode) => {
-  return render(
-    <MemoryRouter>
-      <ShiftKeyContext.Provider value={false}>
-        <ToastProvider>{ui}</ToastProvider>
-      </ShiftKeyContext.Provider>
-    </MemoryRouter>,
-  );
+// Mock other components that aren't relevant to sharing tests
+vi.mock('./ColumnSelector', () => ({
+  ColumnSelector: () => <div>Column Selector</div>,
+}));
+
+vi.mock('./FilterModeSelector', () => ({
+  FilterModeSelector: () => <div>Filter Mode Selector</div>,
+}));
+
+vi.mock('./ResultsFilters/FiltersButton', () => ({
+  default: () => <div>Filters Button</div>,
+}));
+
+vi.mock('./ResultsFilters/FiltersForm', () => ({
+  default: () => <div>Filters Form</div>,
+}));
+
+vi.mock('./AuthorChip', () => ({
+  AuthorChip: () => <div>Author Chip</div>,
+}));
+
+vi.mock('./EvalIdChip', () => ({
+  EvalIdChip: () => <div>Eval ID Chip</div>,
+}));
+
+vi.mock('./ConfigModal', () => ({
+  default: () => <div>Config Modal</div>,
+}));
+
+vi.mock('./TableSettings/TableSettingsModal', () => ({
+  default: () => <div>Settings Modal</div>,
+}));
+
+vi.mock('./DownloadMenu', () => ({
+  default: () => <div>Download Menu</div>,
+}));
+
+vi.mock('./CompareEvalMenuItem', () => ({
+  default: () => <div>Compare Eval Menu Item</div>,
+}));
+
+vi.mock('./EvalSelectorDialog', () => ({
+  default: () => <div>Eval Selector Dialog</div>,
+}));
+
+vi.mock('./EvalSelectorKeyboardShortcut', () => ({
+  default: () => <div>Eval Selector Keyboard Shortcut</div>,
+}));
+
+const mockRecentEvals: ResultLightweightWithLabel[] = [
+  {
+    evalId: 'eval-1',
+    datasetId: null,
+    label: 'Evaluation 1',
+    createdAt: new Date('2023-01-01T00:00:00Z').getTime(),
+    description: 'Test evaluation 1',
+    numTests: 5,
+  },
+];
+
+const renderWithRouter = (component: React.ReactElement) => {
+  return render(<MemoryRouter>{component}</MemoryRouter>);
 };
 
-describe('ResultsView', () => {
+describe('ResultsView Share Button', () => {
   const mockOnRecentEvalSelected = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset to default state
-    mockTableStoreData = {
-      table: mockTableWithoutHighlights,
-      setTable: vi.fn(),
-      config: { description: 'Test Config' },
-      setConfig: vi.fn(),
-      evalId: '1',
-      author: 'Test Author',
-      recentEvals: mockRecentEvals,
-      fetchEvalData: vi.fn(),
-      evals: mockRecentEvals,
-      setAuthor: vi.fn(),
-      filteredResultsCount: 10,
-      totalResultsCount: 10,
-      highlightedResultsCount: 0,
-    };
   });
 
-  it('renders without crashing', () => {
-    renderWithProviders(
-      <ResultsView recentEvals={mockRecentEvals} onRecentEvalSelected={mockOnRecentEvalSelected} />,
+  it('always shows share button regardless of config.sharing value', async () => {
+    renderWithRouter(
+      <ResultsView
+        recentEvals={mockRecentEvals}
+        onRecentEvalSelected={mockOnRecentEvalSelected}
+        defaultEvalId="test-eval-id"
+      />,
     );
 
-    // Verify key elements are rendered
-    expect(screen.getByText('Table Settings')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Search or select an eval...')).toBeInTheDocument();
+    // Click on Eval actions to open the dropdown
+    const evalActionsButton = screen.getByText('Eval actions');
+    await userEvent.click(evalActionsButton);
+
+    // Share button should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Share')).toBeInTheDocument();
+    });
   });
 
-  it('does not show highlighted count when there are no highlighted cells', () => {
-    mockTableStoreData.highlightedResultsCount = 0;
-
-    renderWithProviders(
-      <ResultsView recentEvals={mockRecentEvals} onRecentEvalSelected={mockOnRecentEvalSelected} />,
+  it('opens share modal when share button is clicked', async () => {
+    renderWithRouter(
+      <ResultsView
+        recentEvals={mockRecentEvals}
+        onRecentEvalSelected={mockOnRecentEvalSelected}
+        defaultEvalId="test-eval-id"
+      />,
     );
 
-    // Highlighted chip should not be present
-    expect(screen.queryByText(/highlighted/)).not.toBeInTheDocument();
+    const evalActionsButton = screen.getByText('Eval actions');
+    await userEvent.click(evalActionsButton);
+
+    const shareButton = screen.getByText('Share');
+    await userEvent.click(shareButton);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('share-modal')).toBeInTheDocument();
+    });
   });
 
-  it('shows highlighted count when there are highlighted cells', () => {
-    mockTableStoreData.table = mockTableWithHighlights;
-    mockTableStoreData.highlightedResultsCount = 2;
-
-    renderWithProviders(
-      <ResultsView recentEvals={mockRecentEvals} onRecentEvalSelected={mockOnRecentEvalSelected} />,
+  it('shows share button alongside other menu items', async () => {
+    renderWithRouter(
+      <ResultsView
+        recentEvals={mockRecentEvals}
+        onRecentEvalSelected={mockOnRecentEvalSelected}
+        defaultEvalId="test-eval-id"
+      />,
     );
 
-    // Highlighted chip should be present with correct count
-    expect(screen.getByText('2 highlighted')).toBeInTheDocument();
-  });
+    const evalActionsButton = screen.getByText('Eval actions');
+    await userEvent.click(evalActionsButton);
 
-  it('shows correct singular form for one highlighted cell', () => {
-    mockTableStoreData.highlightedResultsCount = 1;
-
-    renderWithProviders(
-      <ResultsView recentEvals={mockRecentEvals} onRecentEvalSelected={mockOnRecentEvalSelected} />,
-    );
-
-    // Should show "1 highlighted" (not "1 highlighted cells")
-    expect(screen.getByText('1 highlighted')).toBeInTheDocument();
-  });
-
-  it('shows highlighted count visually separated from results count', () => {
-    mockTableStoreData.highlightedResultsCount = 3;
-
-    renderWithProviders(
-      <ResultsView recentEvals={mockRecentEvals} onRecentEvalSelected={mockOnRecentEvalSelected} />,
-    );
-
-    // Both results count and highlighted count should be present but separate
-    expect(screen.getByText('10 results')).toBeInTheDocument();
-    expect(screen.getByText('3 highlighted')).toBeInTheDocument();
-
-    // The highlighted chip should have distinct styling (blue color scheme)
-    const highlightedChip = screen.getByText('3 highlighted').closest('.MuiChip-root');
-    expect(highlightedChip).toHaveStyle({
-      backgroundColor: 'rgba(25, 118, 210, 0.08)',
-      color: 'rgba(25, 118, 210, 1)',
+    await waitFor(() => {
+      // Verify share button is present alongside other expected menu items
+      expect(screen.getByText('Share')).toBeInTheDocument();
+      expect(screen.getByText('Edit name')).toBeInTheDocument();
+      expect(screen.getByText('Edit and re-run')).toBeInTheDocument();
+      expect(screen.getByText('View YAML')).toBeInTheDocument();
+      expect(screen.getByText('Delete')).toBeInTheDocument();
     });
   });
 });

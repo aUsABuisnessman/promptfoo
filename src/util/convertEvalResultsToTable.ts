@@ -1,4 +1,4 @@
-import { type EvaluateTable, type EvaluateTableRow, type ResultsFile } from '../types';
+import { type EvaluateTable, type EvaluateTableRow, type ResultsFile } from '../types/index';
 import invariant from '../util/invariant';
 
 export function convertResultsToTable(eval_: ResultsFile): EvaluateTable {
@@ -83,6 +83,7 @@ export function convertResultsToTable(eval_: ResultsFile): EvaluateTable {
       pass: result.success,
       failureReason: result.failureReason,
       cost: result.cost || 0,
+      tokenUsage: result.tokenUsage,
       audio: result.response?.audio
         ? {
             id: result.response.audio.id,

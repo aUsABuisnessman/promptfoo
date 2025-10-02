@@ -1,12 +1,13 @@
-import * as fetchModule from '../../../src/fetch';
 import { HarmbenchGrader, HarmbenchPlugin } from '../../../src/redteam/plugins/harmbench';
-import type { AtomicTestCase, ApiProvider } from '../../../src/types';
+import * as fetchModule from '../../../src/util/fetch/index';
+
+import type { ApiProvider, AtomicTestCase } from '../../../src/types';
 
 jest.mock('../../../src/matchers', () => ({
   matchesLlmRubric: jest.fn(),
 }));
 
-jest.mock('../../../src/fetch', () => ({
+jest.mock('../../../src/util/fetch/index.ts', () => ({
   fetchWithTimeout: jest.fn(),
 }));
 

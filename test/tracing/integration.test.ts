@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import type { EvaluateTestSuite } from '../../src/types';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import type { EvaluateTestSuite } from '../../src/types/index';
 
 // Define the mock provider class
 class MockTracedProviderInstance {

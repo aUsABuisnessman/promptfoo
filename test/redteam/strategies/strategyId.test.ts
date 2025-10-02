@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+
 import { ADDITIONAL_STRATEGIES, DEFAULT_STRATEGIES } from '../../../src/redteam/constants';
 
 describe('Strategy IDs', () => {
@@ -90,7 +91,6 @@ describe('Strategy IDs', () => {
       'mischievous-user': 'mischievousUser.ts',
       morse: 'otherEncodings.ts',
       multilingual: 'multilingual.ts',
-      pandamonium: 'pandamonium.ts',
       piglatin: 'otherEncodings.ts',
       'prompt-injection': 'promptInjections/index.ts',
       retry: 'retry.ts',
@@ -115,10 +115,7 @@ describe('Strategy IDs', () => {
       // Check if there's an expected file for this strategy
       const expectedFileName = expectedFileNameMap[strategy];
       if (!expectedFileName) {
-        console.error(
-          `No expected file mapping for strategy: ${strategy}. Please update the test.`,
-        );
-        // Rather than failing, just skip this strategy in the test
+        // Skip this strategy in the test since it's not mapped
         return;
       }
 

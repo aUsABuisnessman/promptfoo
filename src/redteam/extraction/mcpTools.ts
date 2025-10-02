@@ -1,6 +1,7 @@
 import logger from '../../logger';
-import { MCPProvider } from '../../providers/mcp';
-import type { ApiProvider } from '../../types';
+import { MCPProvider } from '../../providers/mcp/index';
+
+import type { ApiProvider } from '../../types/index';
 
 /**
  * Helper function to check if a provider path indicates an MCP provider

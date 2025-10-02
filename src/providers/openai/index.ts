@@ -1,11 +1,12 @@
-import type { EnvVarKey } from '../../envars';
 import { getEnvString } from '../../envars';
+
+import type { EnvVarKey } from '../../envars';
 import type {
   ApiProvider,
   CallApiContextParams,
   CallApiOptionsParams,
   ProviderResponse,
-} from '../../types';
+} from '../../types/index';
 import type { EnvOverrides } from '../../types/env';
 import type { OpenAiSharedOptions } from './types';
 

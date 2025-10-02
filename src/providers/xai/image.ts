@@ -1,12 +1,17 @@
 import { getEnvString } from '../../envars';
 import logger from '../../logger';
-import type { CallApiContextParams, CallApiOptionsParams, ProviderResponse } from '../../types';
+import invariant from '../../util/invariant';
+import { callOpenAiImageApi, formatOutput, OpenAiImageProvider } from '../openai/image';
+import { REQUEST_TIMEOUT_MS } from '../shared';
+
+import type {
+  CallApiContextParams,
+  CallApiOptionsParams,
+  ProviderResponse,
+} from '../../types/index';
 import type { EnvOverrides } from '../../types/env';
 import type { ApiProvider } from '../../types/providers';
-import invariant from '../../util/invariant';
-import { OpenAiImageProvider, formatOutput, callOpenAiImageApi } from '../openai/image';
 import type { OpenAiSharedOptions } from '../openai/types';
-import { REQUEST_TIMEOUT_MS } from '../shared';
 
 type XaiImageOptions = OpenAiSharedOptions & {
   n?: number;
@@ -94,8 +99,6 @@ export class XAIImageProvider extends OpenAiImageProvider {
       body.user = config.user;
     }
 
-    logger.debug(`Calling xAI Image API: ${JSON.stringify(body)}`);
-
     const headers = {
       'Content-Type': 'application/json',
       ...(this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : {}),
@@ -123,8 +126,6 @@ export class XAIImageProvider extends OpenAiImageProvider {
         error: `API call error: ${String(err)}`,
       };
     }
-
-    logger.debug(`\txAI image API response: ${JSON.stringify(data)}`);
 
     if (data.error) {
       await data?.deleteFromCache?.();

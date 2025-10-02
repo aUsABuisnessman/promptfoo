@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ quiet: true });
+
 import cliState from './cliState';
 import type { EnvOverrides } from './types/env';
 
@@ -51,6 +53,8 @@ type EnvVars = {
   PROMPTFOO_STRIP_RESPONSE_OUTPUT?: boolean;
   PROMPTFOO_STRIP_TEST_VARS?: boolean;
   PROMPTFOO_TELEMETRY_DEBUG?: boolean;
+  PROMPTFOO_TRACING_ENABLED?: boolean;
+  PROMPTFOO_DISABLE_UNBLOCKING?: boolean;
 
   //=========================================================================
   // promptfoo configuration options
@@ -85,6 +89,11 @@ type EnvVars = {
   PROMPTFOO_SHARE_CHUNK_SIZE?: number;
   PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT?: string;
   PROMPTFOO_CA_CERT_PATH?: string;
+  PROMPTFOO_PFX_CERT_PATH?: string;
+  PROMPTFOO_PFX_PASSWORD?: string;
+  PROMPTFOO_JKS_CERT_PATH?: string;
+  PROMPTFOO_JKS_PASSWORD?: string;
+  PROMPTFOO_JKS_ALIAS?: string;
 
   //=========================================================================
   // HTTP proxy settings
@@ -166,6 +175,7 @@ type EnvVars = {
   ANTHROPIC_TEMPERATURE?: number;
 
   // AWS Bedrock
+  AWS_BEARER_TOKEN_BEDROCK?: string;
   AWS_BEDROCK_FREQUENCY_PENALTY?: string;
   AWS_BEDROCK_MAX_GEN_LEN?: number;
   AWS_BEDROCK_MAX_NEW_TOKENS?: number;
@@ -176,6 +186,11 @@ type EnvVars = {
   AWS_BEDROCK_STOP?: string;
   AWS_BEDROCK_TEMPERATURE?: number;
   AWS_BEDROCK_TOP_P?: string;
+
+  // AWS Bedrock Agents
+  AWS_BEDROCK_AGENT_ID?: string;
+  AWS_BEDROCK_AGENT_ALIAS_ID?: string;
+
   CEREBRAS_API_KEY?: string;
 
   // Azure OpenAI auth params
@@ -205,11 +220,17 @@ type EnvVars = {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_API_KEY?: string;
 
+  // CometAPI
+  COMETAPI_KEY?: string;
+
   // CDP
   CDP_DOMAIN?: string;
 
   // FAL
   FAL_KEY?: string;
+
+  // GitHub
+  GITHUB_TOKEN?: string;
 
   // Groq
   GROQ_API_KEY?: string;
@@ -233,6 +254,9 @@ type EnvVars = {
   // LLaMa
   LLAMA_BASE_URL?: string;
 
+  // Llama API
+  LLAMA_API_KEY?: string;
+
   // Local AI
   LOCALAI_BASE_URL?: string;
   LOCALAI_TEMPERATURE?: number;
@@ -242,6 +266,10 @@ type EnvVars = {
   MISTRAL_TEMPERATURE?: string;
   MISTRAL_TOP_K?: string;
   MISTRAL_TOP_P?: string;
+
+  // Nscale
+  NSCALE_SERVICE_TOKEN?: string;
+  NSCALE_API_KEY?: string;
 
   // Ollama
   OLLAMA_API_KEY?: string;
@@ -390,7 +418,8 @@ export function getEnvFloat(key: EnvVarKey, defaultValue?: number): number | und
 }
 
 /**
- * Get the evaluation timeout in milliseconds.
+ * Get the timeout in milliseconds for each individual test case/provider API call.
+ * When this timeout is reached, that specific test is marked as an error.
  * @param defaultValue Optional default value if the environment variable is not set. Defaults to 0 (no timeout).
  * @returns The timeout value in milliseconds, or the default value if not set.
  */
@@ -399,7 +428,8 @@ export function getEvalTimeoutMs(defaultValue: number = 0): number {
 }
 
 /**
- * Get the maximum duration for an evaluation in milliseconds.
+ * Get the maximum total runtime in milliseconds for the entire evaluation process.
+ * When this timeout is reached, all remaining tests are marked as errors and the evaluation ends.
  * @param defaultValue Optional default value if the environment variable is not set. Defaults to 0 (no limit).
  * @returns The max duration in milliseconds, or the default value if not set.
  */
@@ -427,4 +457,13 @@ export function isCI() {
     getEnvBool('BUILDKITE') ||
     getEnvBool('TEAMCITY_VERSION')
   );
+}
+
+/**
+ * Check if the application is running in a non-interactive environment.
+ * This includes CI environments, cron jobs, SSH scripts without TTY, etc.
+ * @returns True if running in a non-interactive environment, false otherwise.
+ */
+export function isNonInteractive() {
+  return isCI() || !process.stdin.isTTY || !process.stdout.isTTY;
 }

@@ -1,13 +1,15 @@
-import chalk from 'chalk';
-import type { Command } from 'commander';
 import * as fs from 'fs';
-import yaml from 'js-yaml';
 import * as path from 'path';
+
+import chalk from 'chalk';
+import yaml from 'js-yaml';
 import { getUserEmail } from '../../globalConfig/accounts';
 import logger from '../../logger';
 import telemetry from '../../telemetry';
-import { setupEnv } from '../../util';
+import { fetchWithProxy } from '../../util/fetch';
+import { setupEnv } from '../../util/index';
 import { getRemoteGenerationUrl } from '../remoteGeneration';
+import type { Command } from 'commander';
 
 interface PoisonOptions {
   documents: string[];
@@ -56,7 +58,7 @@ export async function generatePoisonedDocument(
   document: string,
   goal?: PoisonOptions['goal'],
 ): Promise<PoisonResponse> {
-  const response = await fetch(getRemoteGenerationUrl(), {
+  const response = await fetchWithProxy(getRemoteGenerationUrl(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

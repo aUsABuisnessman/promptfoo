@@ -1,12 +1,13 @@
-import { OpenAiGenericProvider } from '.';
 import { fetchWithCache, getCache, isCacheEnabled } from '../../cache';
 import logger from '../../logger';
+import { REQUEST_TIMEOUT_MS } from '../shared';
+import { OpenAiGenericProvider } from '.';
+
 import type {
   ApiModerationProvider,
   ModerationFlag,
   ProviderModerationResponse,
-} from '../../types';
-import { REQUEST_TIMEOUT_MS } from '../shared';
+} from '../../types/index';
 
 const OPENAI_MODERATION_MODELS = [
   { id: 'omni-moderation-latest', maxTokens: 32768, capabilities: ['text', 'image'] },
@@ -227,6 +228,9 @@ export class OpenAiModerationProvider
           body: requestBody,
         },
         REQUEST_TIMEOUT_MS,
+        'json',
+        false,
+        this.config.maxRetries,
       );
 
       if (status < 200 || status >= 300) {

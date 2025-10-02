@@ -1,4 +1,5 @@
 import React from 'react';
+
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -10,6 +11,7 @@ import LinearProgress, { linearProgressClasses } from '@mui/material/LinearProgr
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
+import { alpha, styled, useTheme } from '@mui/material/styles';
 import Tab from '@mui/material/Tab';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -19,10 +21,9 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
-import { alpha, styled, useTheme } from '@mui/material/styles';
 import { displayNameOverrides, subCategoryDescriptions } from '@promptfoo/redteam/constants';
-import type { GradingResult, EvaluateResult } from '@promptfoo/types';
 import { getPluginIdFromResult, getStrategyIdFromTest } from './shared';
+import type { EvaluateResult, GradingResult } from '@promptfoo/types';
 
 interface TestWithMetadata {
   prompt: string;
@@ -64,7 +65,7 @@ const DangerLinearProgress = styled(LinearProgress)(({ theme }) => ({
     backgroundColor:
       theme.palette.mode === 'light' ? theme.palette.error.main : theme.palette.error.light,
   },
-})) as React.FC<React.ComponentProps<typeof LinearProgress>>;
+}));
 
 const StyledCard = styled(Card)(({ theme }) => ({
   transition: 'all 0.3s ease',
@@ -112,11 +113,11 @@ const StyledStrategyDescription = styled(Typography)(({ theme }) => ({
   marginBottom: theme.spacing(2),
 }));
 
-const StrategyStats: React.FC<StrategyStatsProps> = ({
+const StrategyStats = ({
   strategyStats,
   failuresByPlugin = {},
   passesByPlugin = {},
-}) => {
+}: StrategyStatsProps) => {
   const [selectedStrategy, setSelectedStrategy] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<Error | null>(null);
@@ -308,7 +309,7 @@ const StrategyStats: React.FC<StrategyStatsProps> = ({
             }}
           >
             <Grid container spacing={3}>
-              <Grid item xs={4}>
+              <Grid size={{ xs: 4 }}>
                 <Typography variant="h6" align="center">
                   {selectedStrategy && strategyStats[selectedStrategy]?.total}
                 </Typography>
@@ -316,7 +317,7 @@ const StrategyStats: React.FC<StrategyStatsProps> = ({
                   Total Attempts
                 </Typography>
               </Grid>
-              <Grid item xs={4}>
+              <Grid size={{ xs: 4 }}>
                 <Typography variant="h6" align="center" color="error.main">
                   {selectedStrategy &&
                     strategyStats[selectedStrategy].total - strategyStats[selectedStrategy].pass}
@@ -325,7 +326,7 @@ const StrategyStats: React.FC<StrategyStatsProps> = ({
                   Flagged Attempts
                 </Typography>
               </Grid>
-              <Grid item xs={4}>
+              <Grid size={{ xs: 4 }}>
                 <Typography variant="h6" align="center">
                   {selectedStrategy &&
                     `${(
@@ -392,6 +393,7 @@ const StrategyStats: React.FC<StrategyStatsProps> = ({
                 .failures.slice(0, 5)
                 .map((failure, index) => (
                   <Paper
+                    key={`${failure.prompt}-${failure.result}`}
                     elevation={0}
                     sx={{
                       mb: 2,
@@ -501,6 +503,7 @@ const StrategyStats: React.FC<StrategyStatsProps> = ({
                 .passes.slice(0, 5)
                 .map((pass, index) => (
                   <Paper
+                    key={`${pass.prompt}-${pass.result}`}
                     elevation={0}
                     sx={{
                       mb: 2,

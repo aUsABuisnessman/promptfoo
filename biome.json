@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.1.1/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.2.4/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,7 +7,24 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.json", "**/*.mjs", "**/*.cjs"]
+    "includes": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.json",
+      "**/*.mjs",
+      "**/*.cjs",
+      "!drizzle/**/*",
+      "!src/app/src/polyfills/**/*",
+      "!**/node_modules/**",
+      "!**/dist/**",
+      "!**/build/**",
+      "!**/public/**",
+      "!examples/adaline-gateway/**/prompt.json",
+      "!examples/multiple-turn-conversation/prompt.json",
+      "!examples/openai-chat-history/prompt.json"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -16,6 +33,59 @@
     "indentWidth": 2,
     "lineWidth": 100,
     "lineEnding": "lf"
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [
+              {
+                "type": false,
+                "source": ["react", "react-dom", "react/**", "react-dom/**"]
+              },
+              ["react", "react-dom", "react/**", "react-dom/**"],
+              ":BLANK_LINE:",
+              {
+                "type": false,
+                "source": [":NODE:", ":BUN:"]
+              },
+              [":NODE:", ":BUN:"],
+              ":BLANK_LINE:",
+              {
+                "type": false,
+                "source": ["**"]
+              },
+              [
+                "**",
+                "!./**",
+                "!../**",
+                "!src/**",
+                "!test/**",
+                "!examples/**",
+                "!react",
+                "!react-dom",
+                "!react/**",
+                "!react-dom/**"
+              ],
+              ":BLANK_LINE:",
+              {
+                "type": false,
+                "source": ["src/**", "test/**", "examples/**"]
+              },
+              ["src/**", "test/**", "examples/**"],
+              ":BLANK_LINE:",
+              {
+                "type": false,
+                "source": ["./**", "../**"]
+              },
+              ["./**", "../**"]
+            ]
+          }
+        }
+      }
+    }
   },
   "linter": {
     "enabled": true,
@@ -30,9 +100,10 @@
       },
       "correctness": {
         "noUnusedVariables": "error",
-        "noUnusedImports": "off",
+        "noUnusedImports": "error",
         "useExhaustiveDependencies": "off",
-        "noUnusedFunctionParameters": "off"
+        "noUnusedFunctionParameters": "off",
+        "useJsxKeyInIterable": "error"
       },
       "style": {
         "noNegationElse": "error",
@@ -45,7 +116,29 @@
         "useSingleVarDeclarator": "off",
         "useImportType": "off",
         "useNodejsImportProtocol": "off",
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "off",
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "fetch": "Use fetchWithProxy() instead of global fetch()."
+            }
+          }
+        },
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "node-fetch": "Use fetchWithProxy() (do not import node-fetch directly).",
+              "undici": {
+                "importNames": ["fetch", "default"],
+                "message": "Use fetchWithProxy() instead of undici.fetch."
+              },
+              "cross-fetch": "Use fetchWithProxy() instead."
+            },
+            "patterns": [{ "group": ["whatwg-fetch", "isomorphic-fetch"] }]
+          }
+        }
       },
       "suspicious": {
         "noExplicitAny": "off",
@@ -146,6 +239,19 @@
         "rules": {
           "correctness": {
             "noUnusedVariables": "error"
+          },
+          "style": {
+            "noRestrictedGlobals": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/app/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": "off"
           }
         }
       }

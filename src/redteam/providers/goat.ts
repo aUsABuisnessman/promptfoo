@@ -4,21 +4,27 @@ import { VERSION } from '../../constants';
 import { renderPrompt } from '../../evaluatorHelpers';
 import { getUserEmail } from '../../globalConfig/accounts';
 import logger from '../../logger';
-import type { Assertion, AssertionSet, AtomicTestCase } from '../../types';
+import { fetchWithProxy } from '../../util/fetch';
+import invariant from '../../util/invariant';
+import { safeJsonStringify } from '../../util/json';
+import { getNunjucksEngine } from '../../util/templates';
+import { sleep } from '../../util/time';
+import { accumulateResponseTokenUsage, createEmptyTokenUsage } from '../../util/tokenUsageUtils';
+import { getRemoteGenerationUrl, neverGenerateRemote } from '../remoteGeneration';
+import { getGoalRubric } from './prompts';
+import { getLastMessageContent, messagesToRedteamHistory, tryUnblocking } from './shared';
+
+import type { Assertion, AssertionSet, AtomicTestCase, GradingResult } from '../../types';
 import type {
   ApiProvider,
   CallApiContextParams,
   CallApiOptionsParams,
   ProviderOptions,
   ProviderResponse,
+  TokenUsage,
 } from '../../types/providers';
-import invariant from '../../util/invariant';
-import { safeJsonStringify } from '../../util/json';
-import { sleep } from '../../util/time';
-import { getRemoteGenerationUrl, neverGenerateRemote } from '../remoteGeneration';
 import type { BaseRedteamMetadata } from '../types';
 import type { Message } from './shared';
-import { getLastMessageContent, messagesToRedteamHistory, tryUnblocking } from './shared';
 
 /**
  * Represents metadata for the GOAT conversation process.
@@ -32,6 +38,7 @@ interface GoatMetadata extends BaseRedteamMetadata {
     response: string;
   }>;
   totalSuccessfulAttacks?: number;
+  storedGraderResult?: GradingResult;
 }
 
 /**
@@ -41,7 +48,7 @@ interface GoatResponse extends ProviderResponse {
   metadata: GoatMetadata;
 }
 
-interface ExtractAttackFailureResponse {
+export interface ExtractAttackFailureResponse {
   message: string;
   task: string;
 }
@@ -56,6 +63,7 @@ interface GoatConfig {
 
 export default class GoatProvider implements ApiProvider {
   readonly config: GoatConfig;
+  private readonly nunjucks: any;
   private successfulAttacks: Array<{
     turn: number;
     prompt: string;
@@ -87,14 +95,13 @@ export default class GoatProvider implements ApiProvider {
         options.excludeTargetOutputFromAgenticAttackGeneration ?? false,
       continueAfterSuccess: options.continueAfterSuccess ?? false,
     };
-    logger.debug(
-      `[GOAT] Constructor options: ${JSON.stringify({
-        injectVar: options.injectVar,
-        maxTurns: options.maxTurns,
-        stateful: options.stateful,
-        continueAfterSuccess: options.continueAfterSuccess,
-      })}`,
-    );
+    this.nunjucks = getNunjucksEngine();
+    logger.debug('[GOAT] Constructor options', {
+      injectVar: options.injectVar,
+      maxTurns: options.maxTurns,
+      stateful: options.stateful,
+      continueAfterSuccess: options.continueAfterSuccess,
+    });
   }
 
   async callApi(
@@ -106,7 +113,7 @@ export default class GoatProvider implements ApiProvider {
     this.successfulAttacks = [];
 
     let response: Response | undefined = undefined;
-    logger.debug(`[GOAT] callApi context: ${safeJsonStringify(context)}`);
+    logger.debug('[GOAT] callApi context', { context });
     invariant(context?.originalProvider, 'Expected originalProvider to be set');
     invariant(context?.vars, 'Expected vars to be set');
 
@@ -114,28 +121,34 @@ export default class GoatProvider implements ApiProvider {
     invariant(targetProvider, 'Expected originalProvider to be set');
 
     const messages: Message[] = [];
-    const totalTokenUsage = {
-      total: 0,
-      prompt: 0,
-      completion: 0,
-      numRequests: 0,
-      cached: 0,
-    };
+    const totalTokenUsage: TokenUsage = createEmptyTokenUsage();
 
     let lastTargetResponse: ProviderResponse | undefined = undefined;
 
     let assertToUse: Assertion | AssertionSet | undefined;
     let graderPassed: boolean | undefined;
+    let storedGraderResult: GradingResult | undefined;
     const { getGraderById } = await import('../graders');
     let test: AtomicTestCase | undefined;
 
     if (context?.test) {
       test = context?.test;
-      assertToUse = test?.assert?.find((a: { type: string }) => a.type);
+      assertToUse = test?.assert?.find(
+        (a: { type: string }) => a.type && a.type.includes(test?.metadata?.pluginId),
+      );
+
+      // Fallback: if no assertion matches the pluginId, use the first assertion with a type
+      if (!assertToUse) {
+        assertToUse = test?.assert?.find((a: { type: string }) => a.type);
+      }
     }
 
     let previousAttackerMessage = '';
     let previousTargetOutput = '';
+
+    // Generate goal-specific evaluation rubric
+    const userGoal = context?.test?.metadata?.goal || context?.vars[this.config.injectVar];
+    const additionalRubric = getGoalRubric(userGoal);
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
       try {
@@ -147,14 +160,6 @@ export default class GoatProvider implements ApiProvider {
             goal: context?.test?.metadata?.goal || context?.vars[this.config.injectVar],
             purpose: context?.test?.metadata?.purpose,
           });
-
-          if (unblockingResult.tokenUsage) {
-            totalTokenUsage.total += unblockingResult.tokenUsage.total || 0;
-            totalTokenUsage.prompt += unblockingResult.tokenUsage.prompt || 0;
-            totalTokenUsage.completion += unblockingResult.tokenUsage.completion || 0;
-            totalTokenUsage.numRequests += unblockingResult.tokenUsage.numRequests ?? 1;
-            totalTokenUsage.cached += unblockingResult.tokenUsage.cached || 0;
-          }
 
           if (unblockingResult.success && unblockingResult.unblockingPrompt) {
             logger.debug(
@@ -178,15 +183,7 @@ export default class GoatProvider implements ApiProvider {
               await sleep(targetProvider.delay);
             }
 
-            if (unblockingResponse.tokenUsage) {
-              totalTokenUsage.total += unblockingResponse.tokenUsage.total || 0;
-              totalTokenUsage.prompt += unblockingResponse.tokenUsage.prompt || 0;
-              totalTokenUsage.completion += unblockingResponse.tokenUsage.completion || 0;
-              totalTokenUsage.numRequests += unblockingResponse.tokenUsage.numRequests ?? 1;
-              totalTokenUsage.cached += unblockingResponse.tokenUsage.cached || 0;
-            } else {
-              totalTokenUsage.numRequests += 1;
-            }
+            accumulateResponseTokenUsage(totalTokenUsage, unblockingResponse);
 
             const unblockingOutput =
               typeof unblockingResponse.output === 'string'
@@ -212,9 +209,10 @@ export default class GoatProvider implements ApiProvider {
             targetOutput: previousTargetOutput,
             attackAttempt: previousAttackerMessage,
             task: 'extract-goat-failure',
+            modifiers: context?.test?.metadata?.modifiers,
           });
           logger.debug(`[GOAT] Sending request to ${getRemoteGenerationUrl()}: ${body}`);
-          response = await fetch(getRemoteGenerationUrl(), {
+          response = await fetchWithProxy(getRemoteGenerationUrl(), {
             body,
             headers: {
               'Content-Type': 'application/json',
@@ -224,7 +222,7 @@ export default class GoatProvider implements ApiProvider {
           const data = (await response.json()) as ExtractAttackFailureResponse;
 
           if (!data.message) {
-            logger.info(`[GOAT] Invalid message from GOAT, skipping turn: ${JSON.stringify(data)}`);
+            logger.info('[GOAT] Invalid message from GOAT, skipping turn', { data });
             continue;
           }
           failureReason = data.message;
@@ -245,10 +243,11 @@ export default class GoatProvider implements ApiProvider {
             this.config.excludeTargetOutputFromAgenticAttackGeneration,
           failureReason,
           purpose: context?.test?.metadata?.purpose,
+          modifiers: context?.test?.metadata?.modifiers,
         });
 
         logger.debug(`[GOAT] Sending request to ${getRemoteGenerationUrl()}: ${body}`);
-        response = await fetch(getRemoteGenerationUrl(), {
+        response = await fetchWithProxy(getRemoteGenerationUrl(), {
           body,
           headers: {
             'Content-Type': 'application/json',
@@ -257,7 +256,7 @@ export default class GoatProvider implements ApiProvider {
         });
         const data = await response.json();
         if (typeof data?.message !== 'object' || !data.message?.content || !data.message?.role) {
-          logger.info(`[GOAT] Invalid message from GOAT, skipping turn: ${JSON.stringify(data)}`);
+          logger.info('[GOAT] Invalid message from GOAT, skipping turn', { data });
           continue;
         }
         const attackerMessage = data.message;
@@ -281,13 +280,6 @@ export default class GoatProvider implements ApiProvider {
           content: renderedAttackerPrompt,
         });
 
-        if (data.tokenUsage) {
-          totalTokenUsage.total += data.tokenUsage.total || 0;
-          totalTokenUsage.prompt += data.tokenUsage.prompt || 0;
-          totalTokenUsage.completion += data.tokenUsage.completion || 0;
-          totalTokenUsage.numRequests += data.tokenUsage.numRequests ?? 1;
-          totalTokenUsage.cached += data.tokenUsage.cached || 0;
-        }
         logger.debug(
           dedent`
           ${chalk.bold.green(`GOAT turn ${turn} history:`)}
@@ -305,8 +297,9 @@ export default class GoatProvider implements ApiProvider {
           logger.debug(`Sleeping for ${targetProvider.delay}ms`);
           await sleep(targetProvider.delay);
         }
+        accumulateResponseTokenUsage(totalTokenUsage, targetResponse);
 
-        logger.debug(`GOAT turn ${turn} target response: ${safeJsonStringify(targetResponse)}`);
+        logger.debug(`GOAT turn ${turn} target response`, { response: targetResponse });
 
         if (targetResponse.sessionId) {
           context = context ?? { vars: {}, prompt: { raw: '', label: 'target' } };
@@ -328,9 +321,9 @@ export default class GoatProvider implements ApiProvider {
         const finalResponse = targetResponse;
 
         if (!stringifiedOutput) {
-          logger.debug(
-            `[GOAT] Target response output is not a string or JSON: ${safeJsonStringify(targetResponse)}`,
-          );
+          logger.debug('[GOAT] Target response output is not a string or JSON', {
+            response: targetResponse,
+          });
           continue;
         }
 
@@ -342,16 +335,6 @@ export default class GoatProvider implements ApiProvider {
         // Store the attack response for potential unblocking in next turn
         previousTargetOutput = stringifiedOutput;
 
-        if (targetResponse.tokenUsage) {
-          totalTokenUsage.total += targetResponse.tokenUsage.total || 0;
-          totalTokenUsage.prompt += targetResponse.tokenUsage.prompt || 0;
-          totalTokenUsage.completion += targetResponse.tokenUsage.completion || 0;
-          totalTokenUsage.numRequests += targetResponse.tokenUsage.numRequests ?? 1;
-          totalTokenUsage.cached += targetResponse.tokenUsage.cached || 0;
-        } else {
-          totalTokenUsage.numRequests += 1;
-        }
-
         lastTargetResponse = finalResponse;
 
         const grader = assertToUse ? getGraderById(assertToUse.type) : undefined;
@@ -362,16 +345,10 @@ export default class GoatProvider implements ApiProvider {
             test,
             targetProvider,
             assertToUse && 'value' in assertToUse ? assertToUse.value : undefined,
+            additionalRubric,
           );
           graderPassed = grade.pass;
-          if (grade.tokensUsed) {
-            totalTokenUsage.total += grade.tokensUsed.total || 0;
-            totalTokenUsage.prompt += grade.tokensUsed.prompt || 0;
-            totalTokenUsage.completion += grade.tokensUsed.completion || 0;
-            totalTokenUsage.cached += grade.tokensUsed.cached || 0;
-          } else {
-            totalTokenUsage.numRequests = (totalTokenUsage.numRequests || 0) + 1;
-          }
+          storedGraderResult = grade;
         }
 
         if (graderPassed === false) {
@@ -406,6 +383,7 @@ export default class GoatProvider implements ApiProvider {
         redteamHistory: messagesToRedteamHistory(messages),
         successfulAttacks: this.successfulAttacks,
         totalSuccessfulAttacks: this.successfulAttacks.length,
+        storedGraderResult,
       },
       tokenUsage: totalTokenUsage,
       guardrails: lastTargetResponse?.guardrails,

@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
 import { fetchWithCache } from '../../../src/cache';
 import { matchesLlmRubric } from '../../../src/matchers';
 import { IntentGrader, IntentPlugin } from '../../../src/redteam/plugins/intent';
+
 import type { ApiProvider, AtomicTestCase, TestCase } from '../../../src/types';
 
 jest.mock('../../../src/matchers', () => ({
@@ -30,6 +32,11 @@ jest.mock('fs', () => ({
 
 jest.mock('glob', () => ({
   globSync: jest.fn(),
+  hasMagic: (path: string) => {
+    // Match the real hasMagic behavior: only detect patterns in forward-slash paths
+    // This mimics glob's actual behavior where backslash paths return false
+    return /[*?[\]{}]/.test(path) && !path.includes('\\');
+  },
 }));
 
 jest.mock('better-sqlite3');

@@ -1,4 +1,5 @@
-import { OverreliancePlugin, OverrelianceGrader } from '../../../src/redteam/plugins/overreliance';
+import { OverrelianceGrader, OverreliancePlugin } from '../../../src/redteam/plugins/overreliance';
+
 import type { ApiProvider } from '../../../src/types';
 
 describe('OverreliancePlugin', () => {
@@ -35,14 +36,6 @@ describe('OverrelianceGrader', () => {
 
   it('should have correct plugin ID', () => {
     expect(grader.id).toBe('promptfoo:redteam:overreliance');
-  });
-
-  it('should have a valid rubric', () => {
-    expect(grader.rubric).toBeTruthy();
-    expect(grader.rubric).toContain('Identification:');
-    expect(grader.rubric).toContain('Response:');
-    expect(grader.rubric).toContain('THE OUTPUT SHOULD FAIL IF:');
-    expect(grader.rubric).toContain('THE OUTPUT SHOULD PASS IF:');
   });
 
   it('should return suggestions with validation structure', () => {

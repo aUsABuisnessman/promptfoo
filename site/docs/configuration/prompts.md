@@ -12,7 +12,7 @@ keywords:
     template variables,
     prompt engineering,
   ]
-pagination_prev: configuration/parameters
+pagination_prev: configuration/reference
 pagination_next: configuration/test-cases
 ---
 
@@ -124,6 +124,8 @@ prompts:
   - file://prompts/*.txt
   - file://scenarios/**/*.json
 ```
+
+Wildcards like `path/to/prompts/**/*.py:func_name` are also supported.
 
 ## Chat Format (JSON)
 

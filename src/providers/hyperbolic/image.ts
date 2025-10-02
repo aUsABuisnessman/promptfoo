@@ -1,10 +1,15 @@
 import { fetchWithCache } from '../../cache';
 import { getEnvString } from '../../envars';
 import logger from '../../logger';
-import type { CallApiContextParams, CallApiOptionsParams, ProviderResponse } from '../../types';
+import { REQUEST_TIMEOUT_MS } from '../shared';
+
+import type {
+  CallApiContextParams,
+  CallApiOptionsParams,
+  ProviderResponse,
+} from '../../types/index';
 import type { EnvOverrides } from '../../types/env';
 import type { ApiProvider } from '../../types/providers';
-import { REQUEST_TIMEOUT_MS } from '../shared';
 
 export type HyperbolicImageOptions = {
   apiKey?: string;
@@ -222,8 +227,6 @@ export class HyperbolicImageProvider implements ApiProvider {
       body.loras = config.loras;
     }
 
-    logger.debug(`Calling Hyperbolic Image API: ${JSON.stringify(body)}`);
-
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
@@ -253,8 +256,6 @@ export class HyperbolicImageProvider implements ApiProvider {
         error: `API call error: ${String(err)}`,
       };
     }
-
-    logger.debug(`\tHyperbolic image API response: ${JSON.stringify(data)}`);
 
     if (data.error) {
       return {

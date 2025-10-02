@@ -1,12 +1,13 @@
 import { handleModeration } from '../../src/assertions/moderation';
 import { matchesModeration } from '../../src/matchers';
+
 import type {
   ApiProvider,
   Assertion,
   AssertionParams,
   AssertionValueFunctionContext,
   TestCase,
-} from '../../src/types';
+} from '../../src/types/index';
 
 jest.mock('../../src/matchers', () => ({
   matchesModeration: jest.fn(),
