@@ -1,6 +1,6 @@
 import { cloudConfig } from '../globalConfig/cloud';
 import logger from '../logger';
-import { fetchWithProxy } from '../util/fetch';
+import { fetchWithProxy } from '../util/fetch/index';
 
 import type {
   ApiProvider,
@@ -75,8 +75,8 @@ export class PromptfooModelProvider implements ApiProvider {
 
   async callApi(
     prompt: string,
-    context?: CallApiContextParams,
-    options?: CallApiOptionsParams,
+    _context?: CallApiContextParams,
+    _options?: CallApiOptionsParams,
   ): Promise<ProviderResponse> {
     logger.debug(`[PromptfooModel] Calling API with model: ${this.model}`);
 

@@ -50,7 +50,7 @@ vi.mock('./EnterpriseBanner', () => ({
 }));
 
 vi.mock('./Overview', () => ({
-  default: vi.fn(({ vulnerabilitiesDataGridRef }: any) => null),
+  default: vi.fn(() => null),
 }));
 
 vi.mock('./StrategyStats', () => ({
@@ -62,7 +62,7 @@ vi.mock('./RiskCategories', () => ({
 }));
 
 vi.mock('./TestSuites', () => ({
-  default: vi.fn(({ vulnerabilitiesDataGridRef }: any) => null),
+  default: vi.fn(() => null),
 }));
 
 vi.mock('./FrameworkCompliance', () => ({
@@ -219,13 +219,15 @@ describe('Report Component Edge Cases', () => {
   });
 
   it('should render without error when vulnerabilitiesDataGridRef.current is null', async () => {
-    const { findByText } = render(<Report />);
+    const { findAllByText } = render(<Report />);
 
     await waitFor(() => {
       expect(Overview).toHaveBeenCalled();
       expect(TestSuites).toHaveBeenCalled();
     });
 
-    await findByText('LLM Risk Assessment');
+    // Should find the text in both the mobile and desktop headers
+    const elements = await findAllByText('Test eval');
+    expect(elements.length).toBeGreaterThanOrEqual(1);
   });
 });

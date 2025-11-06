@@ -196,10 +196,10 @@ export default function Eval({ fetchId }: EvalOptions) {
       const run = async () => {
         const success = await loadEvalById(fetchId);
         if (success) {
-          setLoaded(true);
           setDefaultEvalId(fetchId);
           // Load other recent eval runs
           fetchRecentFileEvals();
+          // Note: setLoaded(true) is handled by the useEffect that watches for table updates
         }
       };
       run();
@@ -211,7 +211,7 @@ export default function Eval({ fetchId }: EvalOptions) {
       /**
        * Populates the table store with the most recent eval result.
        */
-      const handleResultsFile = async (data: ResultsFile | null, isInit: boolean = false) => {
+      const handleResultsFile = async (data: ResultsFile | null) => {
         // If no data provided (e.g., no evals exist yet), clear stale state and mark as loaded
         if (!data) {
           console.log('No eval data available');
@@ -226,12 +226,6 @@ export default function Eval({ fetchId }: EvalOptions) {
         // Set streaming state when we start receiving data
         setIsStreaming(true);
 
-        // Populate values which do not change while the eval results are being streamed.
-        if (isInit) {
-          setTableFromResultsFile(data);
-          setConfig(data.config);
-          setAuthor(data.author ?? null);
-        }
         const newRecentEvals = await fetchRecentFileEvals();
         if (newRecentEvals && newRecentEvals.length > 0) {
           const newId = newRecentEvals[0].evalId;
@@ -247,7 +241,7 @@ export default function Eval({ fetchId }: EvalOptions) {
       socket
         .on('init', async (data) => {
           console.log('Initialized socket connection', data);
-          await handleResultsFile(data, true);
+          await handleResultsFile(data);
         })
         /**
          * The user has run `promptfoo eval` and a new latest eval
@@ -255,7 +249,7 @@ export default function Eval({ fetchId }: EvalOptions) {
          */
         .on('update', async (data) => {
           console.log('Received data update', data);
-          await handleResultsFile(data, false);
+          await handleResultsFile(data);
         });
 
       return () => {
@@ -271,8 +265,8 @@ export default function Eval({ fetchId }: EvalOptions) {
           const defaultEvalId = evals[0].evalId;
           const success = await loadEvalById(defaultEvalId);
           if (success) {
-            setLoaded(true);
             setDefaultEvalId(defaultEvalId);
+            // Note: setLoaded(true) is handled by the useEffect that watches for table updates
           }
         } else {
           // No evals exist - clear stale state and show empty state

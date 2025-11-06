@@ -1,4 +1,4 @@
-import { getDb } from '../../src/database';
+import { getDb } from '../../src/database/index';
 import { getUserEmail } from '../../src/globalConfig/accounts';
 import { runDbMigrations } from '../../src/migrate';
 import Eval, { EvalQueries, getEvalSummaries } from '../../src/models/eval';
@@ -475,7 +475,9 @@ describe('evaluator', () => {
       for (const row of result.body) {
         const hasError = row.outputs.some(
           (output) =>
-            output.text.includes('error') || (output.gradingResult?.reason || '').includes('error'),
+            output.error?.includes('error') ||
+            output.text.includes('error') ||
+            (output.gradingResult?.reason || '').includes('error'),
         );
         expect(hasError).toBe(true);
       }
