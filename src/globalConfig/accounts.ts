@@ -1,29 +1,28 @@
-import { randomUUID } from 'crypto';
-
 import input from '@inquirer/input';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { TERMINAL_MAX_WIDTH } from '../constants';
 import { getEnvString, isCI } from '../envars';
 import logger from '../logger';
+import {
+  BAD_EMAIL_RESULT,
+  BadEmailResult,
+  EMAIL_OK_STATUS,
+  EmailOkStatus,
+  EmailValidationStatus,
+  NO_EMAIL_STATUS,
+  UserEmailStatus,
+} from '../types/email';
 import { fetchWithTimeout } from '../util/fetch/index';
+import { CloudConfig } from './cloud';
 import { readGlobalConfig, writeGlobalConfig, writeGlobalConfigPartial } from './globalConfig';
 
 import type { GlobalConfig } from '../configTypes';
-import {
-  EmailValidationStatus,
-  UserEmailStatus,
-  NO_EMAIL_STATUS,
-  BadEmailResult,
-  EmailOkStatus,
-  EMAIL_OK_STATUS,
-  BAD_EMAIL_RESULT,
-} from '../types/email';
 
 export function getUserId(): string {
   let globalConfig = readGlobalConfig();
   if (!globalConfig?.id) {
-    const newId = randomUUID();
+    const newId = crypto.randomUUID();
     globalConfig = { ...globalConfig, id: newId };
     writeGlobalConfig(globalConfig);
     return newId;
@@ -84,8 +83,35 @@ export function getAuthor(): string | null {
 }
 
 export function isLoggedIntoCloud(): boolean {
-  const userEmail = getUserEmail();
-  return !!userEmail && !isCI();
+  // Check if user has authenticated with Promptfoo Cloud
+  // This supports both interactive (email-based) and non-interactive (API key) authentication
+  // CI environments can authenticate via API keys, so we no longer exclude CI
+  const cloudConfig = new CloudConfig();
+  return cloudConfig.isEnabled();
+}
+
+/**
+ * Get the authentication method used for cloud access
+ * @returns 'api-key' | 'email' | 'none'
+ */
+export function getAuthMethod(): 'api-key' | 'email' | 'none' {
+  const cloudConfig = new CloudConfig();
+  const hasApiKey = cloudConfig.isEnabled();
+  const hasEmail = !!getUserEmail();
+
+  if (hasApiKey && hasEmail) {
+    // Both present - API key is the actual auth mechanism
+    return 'api-key';
+  }
+  if (hasApiKey) {
+    return 'api-key';
+  }
+  if (hasEmail) {
+    // Email without API key - not fully authenticated
+    // (this shouldn't happen in normal flow but handle it)
+    return 'email';
+  }
+  return 'none';
 }
 
 interface EmailStatusResult {
@@ -137,11 +163,11 @@ export async function checkEmailStatus(options?: {
     };
 
     if (options?.validate) {
-      if (
-        [EmailValidationStatus.RISKY_EMAIL, EmailValidationStatus.DISPOSABLE_EMAIL].includes(
-          data.status,
-        )
-      ) {
+      const riskyStatuses: Set<EmailValidationStatus> = new Set([
+        EmailValidationStatus.RISKY_EMAIL,
+        EmailValidationStatus.DISPOSABLE_EMAIL,
+      ]);
+      if (riskyStatuses.has(data.status)) {
         // Tracking filtered emails via this telemetry endpoint for now to guage sensitivity of validation
         // We should take it out once we're happy with the sensitivity
         await telemetry.saveConsent(userEmail, {
@@ -187,22 +213,23 @@ export async function promptForEmailUnverified(): Promise<{ emailNeedsValidation
     await telemetry.record('feature_used', {
       feature: 'promptForEmailUnverified',
     });
-    const emailSchema = z.string().email('Please enter a valid email address');
+    const emailSchema = z.email();
     try {
       email = await input({
         message: 'Redteam evals require email verification. Please enter your work email:',
         validate: (input: string) => {
           const result = emailSchema.safeParse(input);
-          return result.success || result.error.errors[0].message;
+          return result.success || result.error.issues[0].message;
         },
       });
-    } catch (err: any) {
+    } catch (error) {
+      const err = error as Error;
       if (err?.name === 'AbortPromptError' || err?.name === 'ExitPromptError') {
         // exit cleanly on interrupt
         process.exit(1);
       }
       // Unknown error: rethrow
-      logger.error('failed to prompt for email:', err);
+      logger.error(`failed to prompt for email: ${err}`);
       throw err;
     }
     setUserEmail(email);

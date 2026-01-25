@@ -1,29 +1,34 @@
-import DownloadIcon from '@mui/icons-material/Download';
-import Button from '@mui/material/Button';
+import { Button } from '@app/components/ui/button';
+import { DownloadIcon } from '@app/components/ui/icons';
+import { formatASRForDisplay } from '@promptfoo/app/src/utils/redteam';
 import {
   ALIASED_PLUGIN_MAPPINGS,
-  FRAMEWORK_COMPLIANCE_IDS,
   FRAMEWORK_NAMES,
+  type FrameworkComplianceId,
   OWASP_API_TOP_10_NAMES,
   OWASP_LLM_TOP_10_NAMES,
   riskCategorySeverityMap,
   Severity,
 } from '@promptfoo/redteam/constants';
+import { calculateAttackSuccessRate } from '@promptfoo/redteam/metrics';
 import {
   type CategoryStats,
   categorizePlugins,
   expandPluginCollections,
   getPluginDisplayName,
 } from './FrameworkComplianceUtils';
-import { calculateAttackSuccessRate } from '@promptfoo/redteam/metrics';
-import { formatASRForDisplay } from '@promptfoo/app/src/utils/redteam';
 
 interface CSVExporterProps {
   categoryStats: CategoryStats;
   pluginPassRateThreshold: number;
+  frameworksToShow: readonly FrameworkComplianceId[];
 }
 
-const CSVExporter = ({ categoryStats, pluginPassRateThreshold }: CSVExporterProps) => {
+const CSVExporter = ({
+  categoryStats,
+  pluginPassRateThreshold,
+  frameworksToShow,
+}: CSVExporterProps) => {
   // Function to export framework compliance data to CSV
   const exportToCSV = () => {
     // Collect data for all frameworks
@@ -41,8 +46,8 @@ const CSVExporter = ({ categoryStats, pluginPassRateThreshold }: CSVExporterProp
       ],
     ];
 
-    // Add data rows
-    FRAMEWORK_COMPLIANCE_IDS.forEach((frameworkId) => {
+    // Add data rows for configured frameworks
+    frameworksToShow.forEach((frameworkId) => {
       const framework = FRAMEWORK_NAMES[frameworkId];
 
       if (frameworkId === 'owasp:api' || frameworkId === 'owasp:llm') {
@@ -197,13 +202,8 @@ const CSVExporter = ({ categoryStats, pluginPassRateThreshold }: CSVExporterProp
   };
 
   return (
-    <Button
-      variant="contained"
-      color="primary"
-      startIcon={<DownloadIcon />}
-      onClick={exportToCSV}
-      className="print-hide"
-    >
+    <Button onClick={exportToCSV} className="print-hide">
+      <DownloadIcon className="mr-2 size-4" />
       Export framework results to CSV
     </Button>
   );

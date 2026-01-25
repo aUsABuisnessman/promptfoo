@@ -1,51 +1,61 @@
+import { beforeEach, describe, expect, it, Mock, Mocked, MockedClass, vi } from 'vitest';
 import { evaluate } from '../../src/evaluator';
 import logger from '../../src/logger';
 import Eval from '../../src/models/eval';
 import { neverGenerateRemote } from '../../src/redteam/remoteGeneration';
 import { doRemoteGrading } from '../../src/remoteGrading';
-import { ResultFailureReason } from '../../src/types';
-import { fetchWithProxy } from '../../src/util/fetch';
-import {
-  testHTTPProviderConnectivity,
-  testProviderSession,
-} from '../../src/validators/testProvider';
+import { ResultFailureReason } from '../../src/types/index';
+import { fetchWithProxy } from '../../src/util/fetch/index';
+import { testProviderConnectivity, testProviderSession } from '../../src/validators/testProvider';
 
-import type { EvaluateResult, EvaluateSummaryV3 } from '../../src/types';
+import type { EvaluateResult, EvaluateSummaryV3 } from '../../src/types/index';
 import type { ApiProvider } from '../../src/types/providers';
 
 // Mock dependencies
-jest.mock('../../src/evaluator');
-jest.mock('../../src/logger');
-jest.mock('../../src/models/eval');
-jest.mock('../../src/redteam/remoteGeneration');
-jest.mock('../../src/remoteGrading');
-jest.mock('../../src/util/fetch');
-jest.mock('uuid', () => ({
-  v4: jest.fn(() => 'test-uuid-1234'),
-}));
+vi.mock('../../src/evaluator');
+vi.mock('../../src/logger');
+vi.mock('../../src/models/eval');
+vi.mock('../../src/redteam/remoteGeneration');
+vi.mock('../../src/remoteGrading');
+vi.mock('../../src/util/fetch');
+vi.mock('../../src/globalConfig/cloud', async (importOriginal) => {
+  return {
+    ...(await importOriginal()),
+
+    cloudConfig: {
+      getApiHost: vi.fn(() => 'https://api.promptfoo.app'),
+      getApiKey: vi.fn(() => 'test-api-key'),
+      isEnabled: vi.fn(() => true),
+    },
+  };
+});
+vi.stubGlobal('crypto', {
+  ...crypto,
+  randomUUID: vi.fn(() => 'test-uuid-1234'),
+});
 
 describe('Provider Test Functions', () => {
   let mockProvider: ApiProvider;
-  let mockEvalRecord: jest.Mocked<Eval>;
+  let mockEvalRecord: Mocked<Eval>;
   let mockSummary: EvaluateSummaryV3;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // Reset fetchWithProxy mock to default behavior
-    (fetchWithProxy as jest.Mock).mockReset();
+    (fetchWithProxy as Mock).mockReset();
 
     // Setup mock provider
     mockProvider = {
-      id: jest.fn(() => 'test-provider'),
-      callApi: jest.fn(),
+      id: vi.fn(() => 'test-provider'),
+      callApi: vi.fn(),
       config: {},
-      getSessionId: jest.fn(),
+      getSessionId: vi.fn(),
     } as any;
 
     // Setup mock Eval record
     mockEvalRecord = {
-      toEvaluateSummary: jest.fn(),
+      toEvaluateSummary: vi.fn(),
     } as any;
 
     // Setup default mock summary
@@ -80,24 +90,26 @@ describe('Provider Test Functions', () => {
     };
 
     // Mock Eval.constructor
-    (Eval as jest.MockedClass<typeof Eval>).mockImplementation(() => mockEvalRecord);
+    (Eval as MockedClass<typeof Eval>).mockImplementation(function () {
+      return mockEvalRecord;
+    });
     mockEvalRecord.toEvaluateSummary.mockResolvedValue(mockSummary);
 
     // Mock evaluate to resolve successfully by default
-    (evaluate as jest.Mock).mockResolvedValue(mockEvalRecord);
+    (evaluate as Mock).mockResolvedValue(mockEvalRecord);
 
     // Default mock for neverGenerateRemote
-    (neverGenerateRemote as jest.Mock).mockReturnValue(false);
+    (neverGenerateRemote as Mock).mockReturnValue(false);
 
     // Default mock for doRemoteGrading
-    (doRemoteGrading as jest.Mock).mockResolvedValue({
+    (doRemoteGrading as Mock).mockResolvedValue({
       pass: true,
       score: 1,
       reason: 'The system correctly remembered the previous question',
     });
   });
 
-  describe('testHTTPProviderConnectivity', () => {
+  describe('testProviderConnectivity', () => {
     describe('successful connectivity tests', () => {
       it('should successfully test connectivity with agent endpoint analysis', async () => {
         const mockResult: EvaluateResult = {
@@ -139,12 +151,12 @@ describe('Provider Test Functions', () => {
           changes_needed: false,
         };
 
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue(mockAgentResponse),
+          json: vi.fn().mockResolvedValue(mockAgentResponse),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         // Verify evaluation was called WITHOUT assertions
         expect(evaluate).toHaveBeenCalledWith(
@@ -171,6 +183,7 @@ describe('Provider Test Functions', () => {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              Authorization: 'Bearer test-api-key',
             },
             body: JSON.stringify({
               config: mockProvider.config,
@@ -199,7 +212,7 @@ describe('Provider Test Functions', () => {
       });
 
       it('should handle connectivity test with remote grading disabled', async () => {
-        (neverGenerateRemote as jest.Mock).mockReturnValue(true);
+        (neverGenerateRemote as Mock).mockReturnValue(true);
 
         const mockResult: EvaluateResult = {
           promptIdx: 0,
@@ -226,7 +239,7 @@ describe('Provider Test Functions', () => {
 
         mockSummary.results = [mockResult];
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         // Verify evaluation was called without assertions
         expect(evaluate).toHaveBeenCalledWith(
@@ -257,7 +270,7 @@ describe('Provider Test Functions', () => {
       });
 
       it('should extract session ID from provider getSessionId method', async () => {
-        mockProvider.getSessionId = jest.fn(() => 'provider-session-id');
+        mockProvider.getSessionId = vi.fn(() => 'provider-session-id');
 
         const mockResult: EvaluateResult = {
           promptIdx: 0,
@@ -284,15 +297,15 @@ describe('Provider Test Functions', () => {
         mockSummary.stats.successes = 1;
 
         // Mock successful agent response
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue({
+          json: vi.fn().mockResolvedValue({
             message: 'Test passed',
             changes_needed: false,
           }),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result.sessionId).toBe('provider-session-id');
       });
@@ -326,15 +339,15 @@ describe('Provider Test Functions', () => {
         mockSummary.stats.successes = 1;
 
         // Mock successful agent response
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue({
+          json: vi.fn().mockResolvedValue({
             message: 'Test passed',
             changes_needed: false,
           }),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result.sessionId).toBe('response-session-id');
       });
@@ -367,15 +380,15 @@ describe('Provider Test Functions', () => {
         mockSummary.stats.successes = 1;
 
         // Mock successful agent response
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue({
+          json: vi.fn().mockResolvedValue({
             message: 'Test passed',
             changes_needed: false,
           }),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result.sessionId).toBe('test-uuid-1234');
       });
@@ -410,15 +423,15 @@ describe('Provider Test Functions', () => {
         mockSummary.stats.failures = 1;
 
         // Mock agent endpoint response for error case
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue({
+          json: vi.fn().mockResolvedValue({
             message: 'Provider call failed: Connection timeout',
             error: 'Connection timeout',
           }),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         // Should call agent endpoint even when there's an error for analysis
         expect(fetchWithProxy).toHaveBeenCalledWith(
@@ -481,12 +494,12 @@ describe('Provider Test Functions', () => {
           ],
         };
 
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue(mockAgentResponse),
+          json: vi.fn().mockResolvedValue(mockAgentResponse),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -534,12 +547,12 @@ describe('Provider Test Functions', () => {
         mockSummary.stats.successes = 1;
 
         // Mock agent endpoint returning error status
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: false,
           statusText: 'Internal Server Error',
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -588,9 +601,9 @@ describe('Provider Test Functions', () => {
         mockSummary.stats.successes = 1;
 
         // Mock agent endpoint throwing exception
-        (fetchWithProxy as jest.Mock).mockRejectedValue(new Error('Network error'));
+        (fetchWithProxy as Mock).mockRejectedValue(new Error('Network error'));
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -641,12 +654,12 @@ describe('Provider Test Functions', () => {
           message: 'Analysis failed',
         };
 
-        (fetchWithProxy as jest.Mock).mockResolvedValue({
+        (fetchWithProxy as Mock).mockResolvedValue({
           ok: true,
-          json: jest.fn().mockResolvedValue(mockAgentResponse),
+          json: vi.fn().mockResolvedValue(mockAgentResponse),
         });
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -661,9 +674,9 @@ describe('Provider Test Functions', () => {
 
       it('should handle evaluation throwing an error', async () => {
         const evalError = new Error('Evaluation failed');
-        (evaluate as jest.Mock).mockRejectedValue(evalError);
+        (evaluate as Mock).mockRejectedValue(evalError);
 
-        const result = await testHTTPProviderConnectivity(mockProvider);
+        const result = await testProviderConnectivity({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -692,7 +705,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi to return successful responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output:
               'I can help you with various tasks like answering questions, providing information, etc.',
@@ -701,7 +714,7 @@ describe('Provider Test Functions', () => {
             output: 'You asked me what I can help you with.',
           });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         // Verify callApi was called twice with correct prompts and session ID
         expect(mockProvider.callApi).toHaveBeenCalledTimes(2);
@@ -771,10 +784,10 @@ describe('Provider Test Functions', () => {
         };
 
         const serverSessionId = 'server-generated-session-123';
-        mockProvider.getSessionId = jest.fn(() => serverSessionId);
+        mockProvider.getSessionId = vi.fn(() => serverSessionId);
 
         // Mock callApi to return successful responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help with many things!',
             sessionId: serverSessionId,
@@ -784,7 +797,7 @@ describe('Provider Test Functions', () => {
             sessionId: serverSessionId,
           });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         // Verify callApi was called twice
         expect(mockProvider.callApi).toHaveBeenCalledTimes(2);
@@ -835,7 +848,7 @@ describe('Provider Test Functions', () => {
       });
 
       it('should handle session test with remote grading disabled', async () => {
-        (neverGenerateRemote as jest.Mock).mockReturnValue(true);
+        (neverGenerateRemote as Mock).mockReturnValue(true);
 
         mockProvider.config = {
           headers: {
@@ -844,7 +857,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help with many things!',
           })
@@ -852,7 +865,7 @@ describe('Provider Test Functions', () => {
             output: 'You asked what I can help you with.',
           });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         // Verify doRemoteGrading was NOT called
         expect(doRemoteGrading).not.toHaveBeenCalled();
@@ -886,7 +899,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help with many things!',
           })
@@ -895,13 +908,13 @@ describe('Provider Test Functions', () => {
           });
 
         // Mock doRemoteGrading to return failure
-        (doRemoteGrading as jest.Mock).mockResolvedValue({
+        (doRemoteGrading as Mock).mockResolvedValue({
           pass: false,
           score: 0,
           reason: 'The system did not remember the previous question',
         });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result).toEqual(
           expect.objectContaining({
@@ -935,7 +948,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help!',
           })
@@ -943,7 +956,7 @@ describe('Provider Test Functions', () => {
             output: 'You asked about help.',
           });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         // Should log warning but still proceed with test
         expect(logger.warn).toHaveBeenCalledWith(
@@ -965,7 +978,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help!',
           })
@@ -973,8 +986,9 @@ describe('Provider Test Functions', () => {
             output: 'You asked about help.',
           });
 
-        const result = await testProviderSession(mockProvider, undefined, {
-          skipConfigValidation: true,
+        const result = await testProviderSession({
+          provider: mockProvider,
+          options: { skipConfigValidation: true },
         });
 
         // Should NOT log warning
@@ -993,10 +1007,10 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock getSessionId to provide sessionId even without parser
-        mockProvider.getSessionId = jest.fn(() => 'manual-session-id');
+        mockProvider.getSessionId = vi.fn(() => 'manual-session-id');
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help!',
           })
@@ -1004,7 +1018,10 @@ describe('Provider Test Functions', () => {
             output: 'You asked about help.',
           });
 
-        await testProviderSession(mockProvider, { sessionSource: 'server' });
+        await testProviderSession({
+          provider: mockProvider,
+          sessionConfig: { sessionSource: 'server' },
+        });
 
         // Should log warning about missing session parser
         expect(logger.warn).toHaveBeenCalledWith(
@@ -1025,14 +1042,14 @@ describe('Provider Test Functions', () => {
         };
 
         // First response doesn't have sessionId
-        (mockProvider.callApi as jest.Mock).mockResolvedValueOnce({
+        (mockProvider.callApi as Mock).mockResolvedValueOnce({
           output: 'I can help!',
           // No sessionId in response
         });
 
-        mockProvider.getSessionId = jest.fn(() => undefined as any);
+        mockProvider.getSessionId = vi.fn(() => undefined as any);
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -1059,11 +1076,11 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi to return error on first request
-        (mockProvider.callApi as jest.Mock).mockResolvedValueOnce({
+        (mockProvider.callApi as Mock).mockResolvedValueOnce({
           error: 'Connection failed',
         });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -1086,7 +1103,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi - first succeeds, second fails
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help!',
           })
@@ -1094,7 +1111,7 @@ describe('Provider Test Functions', () => {
             error: 'Connection timeout',
           });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result).toEqual({
           success: false,
@@ -1136,10 +1153,10 @@ describe('Provider Test Functions', () => {
         };
 
         const serverSessionId = 'server-session-id';
-        mockProvider.getSessionId = jest.fn(() => serverSessionId);
+        mockProvider.getSessionId = vi.fn(() => serverSessionId);
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help!',
             sessionId: serverSessionId,
@@ -1149,7 +1166,7 @@ describe('Provider Test Functions', () => {
             sessionId: serverSessionId,
           });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result.details?.sessionSource).toBe('server');
         expect(result.details?.sessionId).toBe(serverSessionId);
@@ -1165,7 +1182,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi with empty outputs
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: '',
           })
@@ -1174,13 +1191,13 @@ describe('Provider Test Functions', () => {
           });
 
         // Mock doRemoteGrading to fail for empty outputs
-        (doRemoteGrading as jest.Mock).mockResolvedValue({
+        (doRemoteGrading as Mock).mockResolvedValue({
           pass: false,
           score: 0,
           reason: 'Empty response cannot demonstrate session memory',
         });
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result.success).toBe(false);
         expect(result.details?.response1).toBe('');
@@ -1195,7 +1212,7 @@ describe('Provider Test Functions', () => {
         };
 
         // Mock callApi responses
-        (mockProvider.callApi as jest.Mock)
+        (mockProvider.callApi as Mock)
           .mockResolvedValueOnce({
             output: 'I can help!',
           })
@@ -1204,9 +1221,9 @@ describe('Provider Test Functions', () => {
           });
 
         // Mock doRemoteGrading to throw error
-        (doRemoteGrading as jest.Mock).mockRejectedValue(new Error('Grading service unavailable'));
+        (doRemoteGrading as Mock).mockRejectedValue(new Error('Grading service unavailable'));
 
-        const result = await testProviderSession(mockProvider);
+        const result = await testProviderSession({ provider: mockProvider });
 
         expect(result.success).toBe(false);
         expect(result.message).toContain('Failed to evaluate session');

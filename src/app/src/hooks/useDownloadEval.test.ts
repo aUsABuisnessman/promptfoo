@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downloadBlob } from './useDownloadEval';
 
 describe('downloadBlob', () => {
@@ -7,6 +7,10 @@ describe('downloadBlob', () => {
   const clickMock = vi.fn();
 
   beforeEach(() => {
+    createObjectURLMock.mockClear();
+    revokeObjectURLMock.mockClear();
+    clickMock.mockClear();
+
     global.URL.createObjectURL = createObjectURLMock;
     global.URL.revokeObjectURL = revokeObjectURLMock;
 

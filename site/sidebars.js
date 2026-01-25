@@ -95,6 +95,7 @@ const redTeamSidebar = [
           'red-team/plugins/coppa',
           'red-team/plugins/cyberseceval',
           'red-team/plugins/donotanswer',
+          'red-team/plugins/ecommerce',
           'red-team/plugins/ferpa',
           'red-team/plugins/harmbench',
           'red-team/plugins/aegis',
@@ -165,11 +166,11 @@ const redTeamSidebar = [
           'red-team/strategies/gcg',
           'red-team/strategies/hex',
           'red-team/strategies/homoglyph',
+          'red-team/strategies/jailbreak-templates',
           'red-team/strategies/leetspeak',
           'red-team/strategies/likert',
           'red-team/strategies/math-prompt',
           'red-team/strategies/other-encodings',
-          'red-team/strategies/prompt-injection',
           'red-team/strategies/rot13',
         ],
       },
@@ -181,7 +182,6 @@ const redTeamSidebar = [
           'red-team/strategies/multi-turn',
           'red-team/strategies/goat',
           'red-team/strategies/mischievous-user',
-          'red-team/strategies/simba',
         ],
       },
       {
@@ -191,6 +191,7 @@ const redTeamSidebar = [
         items: [
           'red-team/strategies/iterative',
           'red-team/strategies/meta',
+          'red-team/strategies/hydra',
           'red-team/strategies/tree',
           'red-team/strategies/composite-jailbreaks',
         ],
@@ -230,6 +231,7 @@ const redTeamSidebar = [
     items: [
       'red-team/nist-ai-rmf',
       'red-team/owasp-llm-top-10',
+      'red-team/owasp-agentic-ai',
       'red-team/owasp-api-top-10',
       'red-team/mitre-atlas',
       'red-team/iso-42001',
@@ -295,7 +297,7 @@ const redTeamSidebar = [
       {
         type: 'doc',
         label: 'Agent Red Teaming',
-        id: 'red-team/agents',
+        id: 'red-team/llm-agents',
       },
       {
         type: 'doc',
@@ -311,6 +313,16 @@ const redTeamSidebar = [
         type: 'doc',
         label: 'Foundation Model Red Teaming',
         id: 'red-team/foundation-models',
+      },
+      {
+        type: 'doc',
+        label: 'LLM Supply Chain Security',
+        id: 'red-team/llm-supply-chain',
+      },
+      {
+        type: 'doc',
+        label: 'Detecting Model Drift',
+        id: 'red-team/model-drift',
       },
       {
         type: 'doc',
@@ -406,7 +418,21 @@ const sidebars = {
       link: {
         type: 'generated-index',
       },
-      items: [...redTeamSidebar, { type: 'doc', id: 'guides/llm-redteaming' }],
+      items: redTeamSidebar,
+    },
+    {
+      type: 'category',
+      label: 'Code scanning',
+      link: {
+        type: 'doc',
+        id: 'code-scanning/index',
+      },
+      collapsed: true,
+      items: [
+        { type: 'doc', id: 'code-scanning/github-action' },
+        { type: 'doc', id: 'code-scanning/cli' },
+        { type: 'doc', id: 'code-scanning/vscode-extension' },
+      ],
     },
     {
       type: 'category',

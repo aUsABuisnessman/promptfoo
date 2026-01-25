@@ -1,7 +1,8 @@
-import React, { forwardRef, useImperativeHandle } from 'react';
+import React from 'react';
 
-import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { fireEvent, queryByRole, render, screen } from '@testing-library/react';
+import { TooltipProvider } from '@app/components/ui/tooltip';
+import { renderWithProviders } from '@app/utils/testutils';
+import { fireEvent, queryByRole, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import TargetConfiguration from './TargetConfiguration';
 
@@ -20,10 +21,12 @@ vi.mock('../../hooks/useRedTeamConfig', () => ({
 
 const mockValidate = vi.fn();
 vi.mock('./ProviderConfigEditor', () => ({
-  default: forwardRef((props: any, ref: any) => {
-    useImperativeHandle(ref, () => ({
-      validate: mockValidate,
-    }));
+  default: (props: any) => {
+    React.useEffect(() => {
+      if (props.onValidationRequest) {
+        props.onValidationRequest(mockValidate);
+      }
+    }, [props.onValidationRequest]);
 
     // Render different content based on provider type to test that the right configuration is shown
     return (
@@ -43,7 +46,7 @@ vi.mock('./ProviderConfigEditor', () => ({
         </button>
       </div>
     );
-  }),
+  },
 }));
 
 vi.mock('../LoadExampleButton', () => ({
@@ -54,14 +57,13 @@ vi.mock('../Prompts', () => ({
   default: () => <div data-testid="mock-prompts" />,
 }));
 
-const renderWithTheme = (ui: React.ReactElement) => {
-  const theme = createTheme();
-  return render(<ThemeProvider theme={theme}>{ui}</ThemeProvider>);
-};
+const _AllProviders = ({ children }: { children: React.ReactNode }) => (
+  <TooltipProvider>{children}</TooltipProvider>
+);
 
 describe('TargetConfiguration', () => {
-  let onNextMock: ReturnType<typeof vi.fn>;
-  let onBackMock: ReturnType<typeof vi.fn>;
+  let onNextMock: () => void;
+  let onBackMock: () => void;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -86,7 +88,7 @@ describe('TargetConfiguration', () => {
     it("should call onNext when 'Next' is clicked, provider is valid, and there are no validation errors", () => {
       mockValidate.mockReturnValue(true);
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       const nextButton = screen.getByRole('button', { name: /Next/i });
 
@@ -112,14 +114,14 @@ describe('TargetConfiguration', () => {
         providerType: 'http',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       const nextButton = screen.getByRole('button', { name: /Next/i });
       expect(nextButton).toBeDisabled();
     });
 
     it("should call onBack when 'Back' is clicked", () => {
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       const backButton = screen.getByRole('button', { name: /Back/i });
       fireEvent.click(backButton);
@@ -141,7 +143,7 @@ describe('TargetConfiguration', () => {
         providerType: 'http',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       expect(screen.getByTestId('http-config')).toBeInTheDocument();
       expect(screen.getByText('HTTP Configuration')).toBeInTheDocument();
@@ -162,7 +164,7 @@ describe('TargetConfiguration', () => {
         providerType: 'websocket',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       expect(screen.getByTestId('websocket-config')).toBeInTheDocument();
       expect(screen.getByText('WebSocket Configuration')).toBeInTheDocument();
@@ -179,7 +181,7 @@ describe('TargetConfiguration', () => {
         providerType: 'openai',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       expect(screen.getByTestId('openai-config')).toBeInTheDocument();
       expect(screen.getByText('OpenAI Configuration')).toBeInTheDocument();
@@ -196,7 +198,7 @@ describe('TargetConfiguration', () => {
         providerType: 'custom',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       expect(screen.getByTestId('custom-config')).toBeInTheDocument();
       expect(screen.getByText('Custom Configuration')).toBeInTheDocument();
@@ -215,7 +217,7 @@ describe('TargetConfiguration', () => {
         providerType: 'http',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       // Trigger error from the provider config editor
       const errorButton = screen.getByText('Trigger Error');
@@ -228,7 +230,7 @@ describe('TargetConfiguration', () => {
     it('should disable Next button when there are validation errors', () => {
       mockValidate.mockReturnValue(false);
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       // Trigger error from the provider config editor
       const errorButton = screen.getByText('Trigger Error');
@@ -251,7 +253,7 @@ describe('TargetConfiguration', () => {
         providerType: 'http',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       const docLink = screen.getByRole('link', { name: /View the documentation/i });
       expect(docLink).toHaveAttribute('href', 'https://www.promptfoo.dev/docs/providers/http');
@@ -268,7 +270,7 @@ describe('TargetConfiguration', () => {
         providerType: 'openai',
       });
 
-      renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+      renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
       const docLink = screen.getByRole('link', { name: /View the documentation/i });
       expect(docLink).toHaveAttribute('href', 'https://www.promptfoo.dev/docs/providers/openai');
@@ -286,7 +288,7 @@ describe('TargetConfiguration', () => {
       providerType: undefined,
     });
 
-    const { container } = renderWithTheme(
+    const { container } = renderWithProviders(
       <TargetConfiguration onNext={onNextMock} onBack={onBackMock} />,
     );
 
@@ -305,7 +307,7 @@ describe('TargetConfiguration', () => {
       providerType: 'go',
     });
 
-    renderWithTheme(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
+    renderWithProviders(<TargetConfiguration onNext={onNextMock} onBack={onBackMock} />);
 
     expect(screen.getByText(/Configure Target:/i)).toBeInTheDocument();
   });

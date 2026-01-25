@@ -1,12 +1,9 @@
-import React from 'react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
-import userEvent from '@testing-library/user-event';
-
-import RunTestSuiteButton from './RunTestSuiteButton';
 import { useStore } from '@app/stores/evalConfig';
 import { callApi } from '@app/utils/api';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import RunTestSuiteButton from './RunTestSuiteButton';
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
@@ -16,33 +13,34 @@ vi.mock('@app/utils/api', () => ({
   callApi: vi.fn(),
 }));
 
-const renderWithTheme = (component: React.ReactNode) => {
-  const theme = createTheme({ palette: { mode: 'light' } });
-  return render(<ThemeProvider theme={theme}>{component}</ThemeProvider>);
-};
-
 describe('RunTestSuiteButton', () => {
   beforeEach(() => {
     useStore.getState().reset();
     vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it('should be disabled when there are no prompts or tests', () => {
-    renderWithTheme(<RunTestSuiteButton />);
+    render(<RunTestSuiteButton />);
     const button = screen.getByRole('button', { name: 'Run Eval' });
     expect(button).toBeDisabled();
   });
 
   it('should be disabled when there are prompts but no tests', () => {
     useStore.getState().updateConfig({ prompts: ['prompt 1'] });
-    renderWithTheme(<RunTestSuiteButton />);
+    render(<RunTestSuiteButton />);
     const button = screen.getByRole('button', { name: 'Run Eval' });
     expect(button).toBeDisabled();
   });
 
   it('should be disabled when there are tests but no prompts', () => {
     useStore.getState().updateConfig({ tests: [{ vars: { foo: 'bar' } }] });
-    renderWithTheme(<RunTestSuiteButton />);
+    render(<RunTestSuiteButton />);
     const button = screen.getByRole('button', { name: 'Run Eval' });
     expect(button).toBeDisabled();
   });
@@ -50,9 +48,10 @@ describe('RunTestSuiteButton', () => {
   it('should be enabled when there is at least one prompt and one test', () => {
     useStore.getState().updateConfig({
       prompts: ['prompt 1'],
+      providers: ['openai:gpt-4'],
       tests: [{ vars: { foo: 'bar' } }],
     });
-    renderWithTheme(<RunTestSuiteButton />);
+    render(<RunTestSuiteButton />);
     const button = screen.getByRole('button', { name: 'Run Eval' });
     expect(button).not.toBeDisabled();
   });
@@ -72,18 +71,23 @@ describe('RunTestSuiteButton', () => {
 
     useStore.getState().updateConfig({
       prompts: ['prompt 1'],
+      providers: ['openai:gpt-4'],
       tests: [{ vars: { foo: 'bar' } }],
     });
 
-    renderWithTheme(<RunTestSuiteButton />);
+    render(<RunTestSuiteButton />);
     const button = screen.getByRole('button', { name: 'Run Eval' });
     expect(button).not.toBeDisabled();
 
+    // Click the button with fake timers active to control the interval
     await act(async () => {
-      userEvent.click(button);
+      fireEvent.click(button);
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Advance timers to trigger the polling interval (1000ms in the component)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
 
     expect(mockAlert).toHaveBeenCalledWith(`An error occurred: HTTP error! status: 500`);
 
@@ -92,24 +96,34 @@ describe('RunTestSuiteButton', () => {
 
   it('should revert to non-running state and display an error message when the initial API call fails', async () => {
     const errorMessage = 'Failed to submit test suite';
-    (callApi as ReturnType<typeof vi.fn>).mockRejectedValue(new Error(errorMessage));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    // Mock callApi to reject with an error
+    vi.mocked(callApi).mockRejectedValue(new Error(errorMessage));
 
     useStore.getState().updateConfig({
       prompts: ['prompt 1'],
+      providers: ['openai:gpt-4'],
       tests: [{ vars: { foo: 'bar' } }],
     });
 
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {});
-
-    renderWithTheme(<RunTestSuiteButton />);
+    render(<RunTestSuiteButton />);
     const button = screen.getByRole('button', { name: 'Run Eval' });
-    fireEvent.click(button);
 
+    // Use real timers for the click and wait for async operations
+    vi.useRealTimers();
+    await userEvent.click(button);
+
+    // Wait for the alert to be called
     await waitFor(() => {
       expect(alertMock).toHaveBeenCalledWith(`An error occurred: ${errorMessage}`);
-      expect(screen.getByRole('button', { name: 'Run Eval' })).toBeInTheDocument();
     });
 
+    expect(screen.getByRole('button', { name: 'Run Eval' })).toBeInTheDocument();
+
     alertMock.mockRestore();
+    consoleErrorSpy.mockRestore();
+    vi.useFakeTimers();
   });
 });

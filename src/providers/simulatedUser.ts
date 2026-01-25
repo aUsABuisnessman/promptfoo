@@ -1,7 +1,7 @@
 import logger from '../logger';
 import { getSessionId } from '../redteam/util';
-import invariant from '../util/invariant';
 import { maybeLoadConfigFromExternalFile } from '../util/file';
+import invariant from '../util/invariant';
 import { getNunjucksEngine } from '../util/templates';
 import { sleep } from '../util/time';
 import { accumulateResponseTokenUsage, createEmptyTokenUsage } from '../util/tokenUsageUtils';
@@ -296,6 +296,15 @@ export class SimulatedUser implements ApiProvider {
         '[SimulatedUser] Initial messages end with user message, getting agent response first',
       );
       agentResponse = await this.sendMessageToAgent(messages, context.originalProvider, context);
+
+      // Check for errors from agent response
+      if (agentResponse.error) {
+        return {
+          error: agentResponse.error,
+          tokenUsage,
+        };
+      }
+
       messages.push({ role: 'assistant', content: String(agentResponse.output ?? '') });
       accumulateResponseTokenUsage(tokenUsage, agentResponse);
     }
@@ -314,7 +323,8 @@ export class SimulatedUser implements ApiProvider {
         };
       }
 
-      const { messages: messagesToUser } = userResult;
+      const { messages: messagesToUser, tokenUsage: userTokenUsage } = userResult;
+      accumulateResponseTokenUsage(tokenUsage, { tokenUsage: userTokenUsage });
       const lastMessage = messagesToUser[messagesToUser.length - 1];
 
       // Check whether the judge has determined that the instruction goal is satisfied.
@@ -334,6 +344,14 @@ export class SimulatedUser implements ApiProvider {
         context,
       );
 
+      // Check for errors from agent response
+      if (agentResponse.error) {
+        return {
+          error: agentResponse.error,
+          tokenUsage,
+        };
+      }
+
       messages.push({ role: 'assistant', content: String(agentResponse.output ?? '') });
 
       accumulateResponseTokenUsage(tokenUsage, agentResponse);
@@ -342,7 +360,7 @@ export class SimulatedUser implements ApiProvider {
     return this.serializeOutput(
       messages,
       tokenUsage,
-      agentResponse as ProviderResponse,
+      agentResponse,
       getSessionId(agentResponse, context),
     );
   }
@@ -354,7 +372,7 @@ export class SimulatedUser implements ApiProvider {
   serializeOutput(
     messages: Message[],
     tokenUsage: TokenUsage,
-    finalTargetResponse: ProviderResponse,
+    finalTargetResponse: ProviderResponse | undefined,
     sessionId?: string,
   ) {
     return {
@@ -368,7 +386,7 @@ export class SimulatedUser implements ApiProvider {
         messages,
         sessionId,
       },
-      guardrails: finalTargetResponse.guardrails,
+      guardrails: finalTargetResponse?.guardrails,
     };
   }
 }

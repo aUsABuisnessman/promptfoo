@@ -28,11 +28,11 @@ Strategies are applied during redteam generation and can significantly increase 
 
 ### Static Strategies
 
-Transform inputs using predefined patterns to bypass security controls. These are deterministic transformations that don't require another LLM to act as an attacker. Static strategies are low-resource usage, but they are also easy to detect and often patched in the foundation models. For example, the `base64` strategy encodes inputs as base64 to bypass guardrails and other content filters. `prompt-injection` wraps the payload in a prompt injection such as `ignore previous instructions and {{original_adversarial_input}}`.
+Transform inputs using predefined patterns to bypass security controls. These are deterministic transformations that don't require another LLM to act as an attacker. Static strategies are low-resource usage, but they are also easy to detect and often patched in the foundation models. For example, the `base64` strategy encodes inputs as base64 to bypass guardrails and other content filters. `jailbreak-templates` wraps the payload in known jailbreak templates like DAN or Skeleton Key.
 
 ### Dynamic Strategies
 
-Dynamic strategies use an attacker agent to mutate the original adversarial input through iterative refinement. These strategies make multiple calls to both an attacker model and your target model to determine the most effective attack vector. They have higher success rates than static strategies, but they are also more resource intensive. By default, promptfoo recommends three dynamic strategies: [`jailbreak`](/docs/red-team/strategies/iterative/), [`jailbreak:meta`](/docs/red-team/strategies/meta/), and [`jailbreak:composite`](/docs/red-team/strategies/composite-jailbreaks/) to run on your red-teams.
+Dynamic strategies use an attacker agent to mutate the original adversarial input through iterative refinement. These strategies make multiple calls to both an attacker model and your target model to determine the most effective attack vector. They have higher success rates than static strategies, but they are also more resource intensive. By default, promptfoo recommends three dynamic strategies: [`jailbreak`](/docs/red-team/strategies/iterative/), [`jailbreak:meta`](/docs/red-team/strategies/meta/), and [`jailbreak:composite`](/docs/red-team/strategies/composite-jailbreaks/) to run on your red-teams. For multi-turn agent testing, enable [`jailbreak:hydra`](/docs/red-team/strategies/hydra/) to add adaptive branching conversations.
 
 By default, dynamic strategies like `jailbreak` and `jailbreak:composite` will:
 
@@ -99,6 +99,7 @@ redteam:
   strategies:
     - goat
     - crescendo
+    - jailbreak:hydra
     - mischievous-user
 ```
 

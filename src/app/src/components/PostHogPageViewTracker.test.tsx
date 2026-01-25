@@ -1,7 +1,6 @@
 import { render } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { usePostHog } from './PostHogContext';
 import { PostHogPageViewTracker } from './PostHogPageViewTracker';
 
@@ -95,8 +94,13 @@ describe('PostHogPageViewTracker', () => {
       throw new Error('usePostHog must be used within a PostHogProvider');
     });
 
+    // Suppress console errors for this test since we're intentionally throwing an error
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
     expect(() => {
       render(<PostHogPageViewTracker />, { wrapper: MemoryRouter });
     }).toThrowError('usePostHog must be used within a PostHogProvider');
+
+    consoleErrorSpy.mockRestore();
   });
 });

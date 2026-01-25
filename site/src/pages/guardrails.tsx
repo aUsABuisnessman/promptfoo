@@ -1,4 +1,5 @@
 import React from 'react';
+
 import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
@@ -202,7 +203,7 @@ function CallToActionSection() {
   );
 }
 
-export default function Guardrails(): JSX.Element {
+export default function Guardrails(): React.ReactElement {
   return (
     <Layout
       title="AI Guardrails"

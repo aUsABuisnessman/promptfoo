@@ -2,6 +2,12 @@ import { APIError } from '@anthropic-ai/sdk';
 import { getCache, isCacheEnabled } from '../../cache';
 import { getEnvFloat, getEnvInt } from '../../envars';
 import logger from '../../logger';
+import {
+  type GenAISpanContext,
+  type GenAISpanResult,
+  withGenAISpan,
+} from '../../tracing/genaiTracer';
+import { maybeLoadResponseFormatFromExternalFile } from '../../util/file';
 import { normalizeFinishReason } from '../../util/finishReason';
 import { maybeLoadToolsFromExternalFile } from '../../util/index';
 import { createEmptyTokenUsage } from '../../util/tokenUsageUtils';
@@ -70,7 +76,7 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
 
   async callApi(prompt: string, context?: CallApiContextParams): Promise<ProviderResponse> {
     // Wait for MCP initialization if it's in progress
-    if (this.initializationPromise) {
+    if (this.initializationPromise != null) {
       await this.initializationPromise;
     }
 
@@ -84,6 +90,67 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
       throw new Error('Anthropic model name is not set. Please provide a valid model name.');
     }
 
+    // Set up tracing context
+    const spanContext: GenAISpanContext = {
+      system: 'anthropic',
+      operationName: 'chat',
+      model: this.modelName,
+      providerId: this.id(),
+      // Optional request parameters
+      maxTokens: this.config.max_tokens,
+      temperature: this.config.temperature,
+      // Promptfoo context from test case if available
+      testIndex: context?.test?.vars?.__testIdx as number | undefined,
+      promptLabel: context?.prompt?.label,
+      // W3C Trace Context for linking to evaluation trace
+      traceparent: context?.traceparent,
+      // Request body for debugging/observability
+      requestBody: prompt,
+    };
+
+    // Result extractor to set response attributes on the span
+    const resultExtractor = (response: ProviderResponse): GenAISpanResult => {
+      const result: GenAISpanResult = {};
+
+      if (response.tokenUsage) {
+        result.tokenUsage = {
+          prompt: response.tokenUsage.prompt,
+          completion: response.tokenUsage.completion,
+          total: response.tokenUsage.total,
+          cached: response.tokenUsage.cached,
+        };
+      }
+
+      // Extract finish reason if available
+      if (response.finishReason) {
+        result.finishReasons = [response.finishReason];
+      }
+
+      // Cache hit status
+      if (response.cached !== undefined) {
+        result.cacheHit = response.cached;
+      }
+
+      // Response body for debugging/observability
+      if (response.output !== undefined) {
+        result.responseBody =
+          typeof response.output === 'string' ? response.output : JSON.stringify(response.output);
+      }
+
+      return result;
+    };
+
+    // Wrap the API call in a span
+    return withGenAISpan(spanContext, () => this.callApiInternal(prompt, context), resultExtractor);
+  }
+
+  /**
+   * Internal implementation of callApi without tracing wrapper.
+   */
+  private async callApiInternal(
+    prompt: string,
+    context?: CallApiContextParams,
+  ): Promise<ProviderResponse> {
     // Merge configs from the provider and the prompt
     const config: AnthropicMessageOptions = {
       ...this.config,
@@ -99,12 +166,18 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
     }
 
     // Load and process tools from config (handles both external files and inline tool definitions)
-    const configTools = maybeLoadToolsFromExternalFile(config.tools) || [];
+    const configTools = (await maybeLoadToolsFromExternalFile(config.tools, context?.vars)) || [];
     const { processedTools: processedConfigTools, requiredBetaFeatures } =
       processAnthropicTools(configTools);
 
     // Combine all tools
     const allTools = [...mcpTools, ...processedConfigTools];
+
+    // Process output_format with external file loading and variable rendering
+    const processedOutputFormat = maybeLoadResponseFormatFromExternalFile(
+      config.output_format,
+      context?.vars,
+    );
 
     const shouldStream = config.stream ?? false;
     const params: Anthropic.MessageCreateParams = {
@@ -122,6 +195,7 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
       ...(allTools.length > 0 ? { tools: allTools as any } : {}),
       ...(config.tool_choice ? { tool_choice: config.tool_choice } : {}),
       ...(config.thinking || thinking ? { thinking: config.thinking || thinking } : {}),
+      ...(processedOutputFormat ? { output_format: processedOutputFormat as any } : {}),
       ...(typeof config?.extra_body === 'object' && config.extra_body ? config.extra_body : {}),
     };
 
@@ -132,7 +206,16 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
     };
 
     // Add beta features header if specified
-    const allBetaFeatures = [...(config.beta || []), ...requiredBetaFeatures];
+    let allBetaFeatures = [...(config.beta || []), ...requiredBetaFeatures];
+
+    // Automatically add structured-outputs beta when output_format is used
+    if (processedOutputFormat && !allBetaFeatures.includes('structured-outputs-2025-11-13')) {
+      allBetaFeatures.push('structured-outputs-2025-11-13');
+    }
+
+    // Deduplicate beta features
+    allBetaFeatures = [...new Set(allBetaFeatures)];
+
     if (allBetaFeatures.length > 0) {
       headers['anthropic-beta'] = allBetaFeatures.join(',');
     }
@@ -148,8 +231,19 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
         try {
           const parsedCachedResponse = JSON.parse(cachedResponse) as Anthropic.Messages.Message;
           const finishReason = normalizeFinishReason(parsedCachedResponse.stop_reason);
+          let output = outputFromMessage(parsedCachedResponse, config.showThinking ?? true);
+
+          // Handle structured JSON output parsing
+          if (processedOutputFormat?.type === 'json_schema' && typeof output === 'string') {
+            try {
+              output = JSON.parse(output);
+            } catch (error) {
+              logger.error(`Failed to parse JSON output from structured outputs: ${error}`);
+            }
+          }
+
           return {
-            output: outputFromMessage(parsedCachedResponse, config.showThinking ?? true),
+            output,
             tokenUsage: getTokenUsage(parsedCachedResponse, true),
             ...(finishReason && { finishReason }),
             cost: calculateAnthropicCost(
@@ -158,6 +252,7 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
               parsedCachedResponse.usage?.input_tokens,
               parsedCachedResponse.usage?.output_tokens,
             ),
+            cached: true,
           };
         } catch {
           // Could be an old cache item, which was just the text content from TextBlock.
@@ -189,8 +284,19 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
         }
 
         const finishReason = normalizeFinishReason(finalMessage.stop_reason);
+        let output = outputFromMessage(finalMessage, config.showThinking ?? true);
+
+        // Handle structured JSON output parsing
+        if (processedOutputFormat?.type === 'json_schema' && typeof output === 'string') {
+          try {
+            output = JSON.parse(output);
+          } catch (error) {
+            logger.error(`Failed to parse JSON output from structured outputs: ${error}`);
+          }
+        }
+
         return {
-          output: outputFromMessage(finalMessage, config.showThinking ?? true),
+          output,
           tokenUsage: getTokenUsage(finalMessage, false),
           ...(finishReason && { finishReason }),
           cost: calculateAnthropicCost(
@@ -216,8 +322,19 @@ export class AnthropicMessagesProvider extends AnthropicGenericProvider {
         }
 
         const finishReason = normalizeFinishReason(response.stop_reason);
+        let output = outputFromMessage(response, config.showThinking ?? true);
+
+        // Handle structured JSON output parsing
+        if (processedOutputFormat?.type === 'json_schema' && typeof output === 'string') {
+          try {
+            output = JSON.parse(output);
+          } catch (error) {
+            logger.error(`Failed to parse JSON output from structured outputs: ${error}`);
+          }
+        }
+
         return {
-          output: outputFromMessage(response, config.showThinking ?? true),
+          output,
           tokenUsage: getTokenUsage(response, false),
           ...(finishReason && { finishReason }),
           cost: calculateAnthropicCost(

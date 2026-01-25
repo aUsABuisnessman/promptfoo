@@ -4,13 +4,18 @@ export const FRAMEWORK_COMPLIANCE_IDS = [
   'nist:ai:measure',
   'owasp:api',
   'owasp:llm',
+  'owasp:agentic',
   'eu:ai-act',
   'iso:42001',
+  'gdpr',
 ] as const;
 export type FrameworkComplianceId = (typeof FRAMEWORK_COMPLIANCE_IDS)[number];
 
 export const DEFAULT_STRATEGIES = ['basic', 'jailbreak:meta', 'jailbreak:composite'] as const;
 export type DefaultStrategy = (typeof DEFAULT_STRATEGIES)[number];
+export const DEFAULT_STRATEGIES_SET: ReadonlySet<string> = new Set(DEFAULT_STRATEGIES);
+
+export const DEFAULT_MULTI_TURN_MAX_TURNS = 5;
 
 export const MULTI_TURN_STRATEGIES = [
   'crescendo',
@@ -18,17 +23,25 @@ export const MULTI_TURN_STRATEGIES = [
   'jailbreak:hydra',
   'custom',
   'mischievous-user',
-  'simba',
 ] as const;
+
+export type MultiTurnStrategy = (typeof MULTI_TURN_STRATEGIES)[number];
+export const MULTI_TURN_STRATEGY_SET: ReadonlySet<string> = new Set(MULTI_TURN_STRATEGIES);
+
+export const isMultiTurnStrategy = (
+  strategyId: string | undefined,
+): strategyId is MultiTurnStrategy => {
+  return strategyId ? MULTI_TURN_STRATEGY_SET.has(strategyId) : false;
+};
 
 // Helper function to check if a strategy is a custom variant
 export const isCustomStrategy = (strategyId: string): boolean => {
   return strategyId === 'custom' || strategyId.startsWith('custom:');
 };
-export type MultiTurnStrategy = (typeof MULTI_TURN_STRATEGIES)[number];
 
 export const MULTI_MODAL_STRATEGIES = ['audio', 'image', 'video'] as const;
 export type MultiModalStrategy = (typeof MULTI_MODAL_STRATEGIES)[number];
+export const MULTI_MODAL_STRATEGIES_SET: ReadonlySet<string> = new Set(MULTI_MODAL_STRATEGIES);
 
 export const AGENTIC_STRATEGIES = [
   'crescendo',
@@ -39,9 +52,9 @@ export const AGENTIC_STRATEGIES = [
   'jailbreak:meta',
   'jailbreak:tree',
   'mischievous-user',
-  'simba',
 ] as const;
 export type AgenticStrategy = (typeof AGENTIC_STRATEGIES)[number];
+export const AGENTIC_STRATEGIES_SET: ReadonlySet<string> = new Set(AGENTIC_STRATEGIES);
 
 export const DATASET_PLUGINS = [
   'beavertails',
@@ -52,6 +65,7 @@ export const DATASET_PLUGINS = [
   'aegis',
   'pliny',
   'unsafebench',
+  'vlguard',
   'xstest',
 ] as const;
 export type DatasetPlugin = (typeof DATASET_PLUGINS)[number];
@@ -76,6 +90,7 @@ export const ADDITIONAL_STRATEGIES = [
   'jailbreak:likert',
   'jailbreak:meta',
   'jailbreak:tree',
+  'jailbreak-templates',
   'layer',
   'leetspeak',
   'math-prompt',
@@ -83,10 +98,9 @@ export const ADDITIONAL_STRATEGIES = [
   'morse',
   'multilingual', // Deprecated: Use top-level language config instead
   'piglatin',
-  'prompt-injection',
+  'prompt-injection', // Deprecated: Use 'jailbreak-templates' instead
   'retry',
   'rot13',
-  'simba',
   'video',
 ] as const;
 export type AdditionalStrategy = (typeof ADDITIONAL_STRATEGIES)[number];
@@ -121,10 +135,10 @@ export const CONFIGURABLE_STRATEGIES = [
   'citation',
   'custom',
   'mischievous-user',
-  'simba',
 ] as const;
 
 export type ConfigurableStrategy = (typeof CONFIGURABLE_STRATEGIES)[number];
+export const CONFIGURABLE_STRATEGIES_SET: ReadonlySet<string> = new Set(CONFIGURABLE_STRATEGIES);
 
 /**
  * Set of strategy IDs that represent encoding transformations where originalText should be shown
@@ -203,3 +217,8 @@ export const STRATEGIES_REQUIRING_REMOTE = [
   'jailbreak:likert',
   'jailbreak:meta',
 ] as const;
+
+export type StrategyRequiringRemote = (typeof STRATEGIES_REQUIRING_REMOTE)[number];
+export const STRATEGIES_REQUIRING_REMOTE_SET: ReadonlySet<string> = new Set(
+  STRATEGIES_REQUIRING_REMOTE,
+);

@@ -1,9 +1,17 @@
+import { renderWithProviders } from '@app/utils/testutils';
 import { screen } from '@testing-library/dom';
-import { render, waitFor } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DownloadMenu from './DownloadMenu';
+import { DownloadDialog } from './DownloadMenu';
 import { useTableStore as useResultsViewStore } from './store';
+
+// Helper to render DownloadDialog with open state
+function renderDownloadDialog() {
+  const onClose = vi.fn();
+  const result = renderWithProviders(<DownloadDialog open={true} onClose={onClose} />);
+  return { ...result, onClose };
+}
 
 // Get a reference to the mock
 const showToastMock = vi.fn();
@@ -148,7 +156,7 @@ describe('DownloadMenu', () => {
       },
     );
 
-    (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    vi.mocked(useResultsViewStore).mockReturnValue({
       table: mockTable,
       config: mockConfig,
       evalId: mockEvalId,
@@ -161,20 +169,13 @@ describe('DownloadMenu', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the Download menu item', () => {
-    render(<DownloadMenu />);
-    expect(screen.getByText('Download')).toBeInTheDocument();
-  });
-
-  it('opens the dialog when clicking the Download menu item', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+  it('renders the dialog with download options', async () => {
+    renderDownloadDialog();
     expect(screen.getByText('Download YAML Config')).toBeInTheDocument();
   });
 
   it('downloads YAML config when clicking the button', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('Download YAML Config'));
 
     await waitFor(() => {
@@ -184,9 +185,9 @@ describe('DownloadMenu', () => {
   });
 
   it('downloads CSV when clicking the button', async () => {
-    render(<DownloadMenu />);
+    renderDownloadDialog();
+    // Hook options should be set after component renders
     expect(csvHookOptions?.onSuccess).toBeInstanceOf(Function);
-    await userEvent.click(screen.getByText('Download'));
     await userEvent.click(screen.getByText('Download Results CSV'));
 
     await waitFor(() => {
@@ -195,9 +196,9 @@ describe('DownloadMenu', () => {
   });
 
   it('downloads Table JSON when clicking the button', async () => {
-    render(<DownloadMenu />);
+    renderDownloadDialog();
+    // Hook options should be set after component renders
     expect(jsonHookOptions?.onSuccess).toBeInstanceOf(Function);
-    await userEvent.click(screen.getByText('Download'));
     await userEvent.click(screen.getByText('Download Results JSON'));
 
     await waitFor(() => {
@@ -208,8 +209,7 @@ describe('DownloadMenu', () => {
   it('shows loading state while CSV download is in progress', async () => {
     csvIsLoading = true;
 
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
 
     const csvButton = screen.getByRole('button', { name: 'Downloading...' });
     expect(csvButton).toBeDisabled();
@@ -218,16 +218,14 @@ describe('DownloadMenu', () => {
   it('shows loading state while JSON download is in progress', async () => {
     jsonIsLoading = true;
 
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
 
     const jsonButton = screen.getByRole('button', { name: 'Downloading...' });
     expect(jsonButton).toBeDisabled();
   });
 
   it('downloads DPO JSON when clicking the button', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('DPO JSON'));
 
     await waitFor(() => {
@@ -237,8 +235,7 @@ describe('DownloadMenu', () => {
   });
 
   it('downloads Human Eval Test YAML when clicking the button', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('Human Eval YAML'));
 
     await waitFor(() => {
@@ -248,7 +245,7 @@ describe('DownloadMenu', () => {
   });
 
   it('handles malformed output structures in DPO JSON export without crashing', async () => {
-    (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    vi.mocked(useResultsViewStore).mockReturnValue({
       table: {
         ...mockTable,
         body: [
@@ -268,8 +265,7 @@ describe('DownloadMenu', () => {
       evalId: mockEvalId,
     });
 
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('DPO JSON'));
 
     await waitFor(() => {
@@ -278,7 +274,7 @@ describe('DownloadMenu', () => {
   });
 
   it('shows a toast when evalId is not available', async () => {
-    (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    vi.mocked(useResultsViewStore).mockReturnValue({
       table: mockTable,
       config: mockConfig,
       evalId: null,
@@ -287,15 +283,14 @@ describe('DownloadMenu', () => {
     // Clear any previous calls to the mock
     showToastMock.mockClear();
 
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('Download Results CSV'));
 
     expect(showToastMock).toHaveBeenCalledWith('No evaluation ID', 'error');
   });
 
   it('handles null gradingResult in downloadHumanEvalTestCases without crashing', async () => {
-    (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    vi.mocked(useResultsViewStore).mockReturnValue({
       table: {
         ...mockTable,
         body: [
@@ -315,8 +310,7 @@ describe('DownloadMenu', () => {
       evalId: mockEvalId,
     });
 
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('Human Eval YAML'));
 
     await waitFor(() => {
@@ -325,7 +319,7 @@ describe('DownloadMenu', () => {
   });
 
   it('handles deeply nested null properties in outputs without crashing', () => {
-    (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    vi.mocked(useResultsViewStore).mockReturnValue({
       table: {
         ...mockTable,
         body: [
@@ -346,13 +340,12 @@ describe('DownloadMenu', () => {
     });
 
     expect(() => {
-      render(<DownloadMenu />);
+      renderDownloadDialog();
     }).not.toThrow();
   });
 
   it('downloads Burp Suite Payloads when clicking the button', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('Burp Payloads'));
 
     await waitFor(() => {
@@ -362,8 +355,7 @@ describe('DownloadMenu', () => {
   });
 
   it('properly categorizes download options into sections', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
 
     // Check the category headings
     expect(screen.getByText('Configuration Files')).toBeInTheDocument();
@@ -372,27 +364,21 @@ describe('DownloadMenu', () => {
   });
 
   it('displays the "Downloaded" indicator in CommandBlock after downloading YAML config', async () => {
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
     await userEvent.click(screen.getByText('Download YAML Config'));
 
     await waitFor(() => {
-      const commandBlock = screen
-        .getByText('Run this command to execute the eval again:')
-        .closest('.MuiPaper-root');
-      expect(commandBlock).toBeInTheDocument();
+      // Check for the "Downloaded" text which appears after download
       expect(screen.getByText('Downloaded')).toBeVisible();
-      expect(commandBlock?.querySelector('svg[data-testid="CheckCircleIcon"]')).toBeInTheDocument();
     });
   });
 
   it('shows an error toast when clipboard API fails', async () => {
-    (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mockImplementationOnce(() =>
+    vi.mocked(navigator.clipboard.writeText).mockImplementationOnce(() =>
       Promise.reject(new Error('Clipboard write failed')),
     );
 
-    render(<DownloadMenu />);
-    await userEvent.click(screen.getByText('Download'));
+    renderDownloadDialog();
 
     const copyButton = screen.getAllByLabelText('Copy command')[0];
     await userEvent.click(copyButton);
@@ -404,21 +390,20 @@ describe('DownloadMenu', () => {
 
   describe('Failed Tests Config Button disabled state', () => {
     it('disables the button when table is null', async () => {
-      (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      vi.mocked(useResultsViewStore).mockReturnValue({
         table: null,
         config: mockConfig,
         evalId: mockEvalId,
       });
 
-      render(<DownloadMenu />);
-      await userEvent.click(screen.getByText('Download'));
+      renderDownloadDialog();
 
       const button = screen.getByRole('button', { name: /Download Failed Tests/i });
       expect(button).toBeDisabled();
     });
 
     it('disables the button when table.body is null', async () => {
-      (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      vi.mocked(useResultsViewStore).mockReturnValue({
         table: {
           head: mockTable.head,
           body: null as any,
@@ -427,15 +412,14 @@ describe('DownloadMenu', () => {
         evalId: mockEvalId,
       });
 
-      render(<DownloadMenu />);
-      await userEvent.click(screen.getByText('Download'));
+      renderDownloadDialog();
 
       const button = screen.getByRole('button', { name: /Download Failed Tests/i });
       expect(button).toBeDisabled();
     });
 
     it('disables the button when table.body is undefined', async () => {
-      (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      vi.mocked(useResultsViewStore).mockReturnValue({
         table: {
           head: mockTable.head,
           body: undefined as any,
@@ -444,15 +428,14 @@ describe('DownloadMenu', () => {
         evalId: mockEvalId,
       });
 
-      render(<DownloadMenu />);
-      await userEvent.click(screen.getByText('Download'));
+      renderDownloadDialog();
 
       const button = screen.getByRole('button', { name: /Download Failed Tests/i });
       expect(button).toBeDisabled();
     });
 
     it('disables the button when all tests pass', async () => {
-      (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      vi.mocked(useResultsViewStore).mockReturnValue({
         table: {
           ...mockTable,
           body: [
@@ -472,8 +455,7 @@ describe('DownloadMenu', () => {
         evalId: mockEvalId,
       });
 
-      render(<DownloadMenu />);
-      await userEvent.click(screen.getByText('Download'));
+      renderDownloadDialog();
 
       const button = screen.getByRole('button', { name: /Download Failed Tests/i });
       expect(button).toBeDisabled();
@@ -481,21 +463,20 @@ describe('DownloadMenu', () => {
 
     it('enables the button when there are failed tests', async () => {
       // Using the default mockTable which has failed tests
-      (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      vi.mocked(useResultsViewStore).mockReturnValue({
         table: mockTable,
         config: mockConfig,
         evalId: mockEvalId,
       });
 
-      render(<DownloadMenu />);
-      await userEvent.click(screen.getByText('Download'));
+      renderDownloadDialog();
 
       const button = screen.getByRole('button', { name: /Download Failed Tests/i });
       expect(button).not.toBeDisabled();
     });
 
     it('handles edge case with empty body array', async () => {
-      (useResultsViewStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      vi.mocked(useResultsViewStore).mockReturnValue({
         table: {
           ...mockTable,
           body: [],
@@ -504,8 +485,7 @@ describe('DownloadMenu', () => {
         evalId: mockEvalId,
       });
 
-      render(<DownloadMenu />);
-      await userEvent.click(screen.getByText('Download'));
+      renderDownloadDialog();
 
       const button = screen.getByRole('button', { name: /Download Failed Tests/i });
       // Empty body means no tests, so should be disabled

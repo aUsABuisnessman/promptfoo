@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+
 import { Editor } from '@monaco-editor/react';
 import CheckIcon from '@mui/icons-material/Check';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -14,7 +15,7 @@ interface HttpConfigGeneratorProps {
   className?: string;
 }
 
-export function HttpConfigGenerator({ className }: HttpConfigGeneratorProps): JSX.Element {
+export function HttpConfigGenerator({ className }: HttpConfigGeneratorProps): React.ReactElement {
   const [request, setRequest] = useState(
     `POST /v1/weather HTTP/1.1
 Host: api.weather-example.com
@@ -53,7 +54,6 @@ Content-Type: application/json
     setLoading(true);
     setError('');
     try {
-      // biome-ignore lint/style/noRestrictedGlobals: Site documentation file, fetch is acceptable here
       const res = await fetch('https://api.promptfoo.app/api/v1/http-provider-generator', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -5,9 +5,11 @@ import { useTableStore } from './store';
 
 // Mock Chart.js
 vi.mock('chart.js', () => {
-  const ChartMock = vi.fn().mockImplementation(() => ({
-    destroy: vi.fn(),
-  }));
+  const ChartMock = vi.fn().mockImplementation(function () {
+    return {
+      destroy: vi.fn(),
+    };
+  });
 
   // Add static properties to the mock constructor
   (ChartMock as any).register = vi.fn();
@@ -29,15 +31,6 @@ vi.mock('chart.js', () => {
     Colors: vi.fn(),
   };
 });
-
-// Mock MUI theme
-vi.mock('@mui/material/styles', () => ({
-  useTheme: vi.fn(() => ({
-    palette: {
-      mode: 'light',
-    },
-  })),
-}));
 
 // Mock the store
 vi.mock('./store', () => ({

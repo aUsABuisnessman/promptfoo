@@ -23,10 +23,13 @@ import {
 } from '../matchers';
 import { isPackagePath, loadFromPackage } from '../providers/packageParser';
 import { runPython } from '../python/pythonUtils';
+import { generateSpanId, generateTraceparent } from '../tracing/evaluatorTracing';
+import { getTraceStore } from '../tracing/store';
 import {
   type ApiProvider,
   type Assertion,
   type AssertionType,
+  type AssertionValue,
   type AtomicTestCase,
   type CallApiContextParams,
   type GradingResult,
@@ -71,18 +74,21 @@ import { handlePerplexity, handlePerplexityScore } from './perplexity';
 import { handlePiScorer } from './pi';
 import { handlePython } from './python';
 import { handleRedteam } from './redteam';
-import { handleRuby } from './ruby';
 import { handleIsRefusal } from './refusal';
 import { handleRegex } from './regex';
 import { handleRougeScore } from './rouge';
+import { handleRuby } from './ruby';
+import { handleSearchRubric } from './searchRubric';
 import { handleSimilar } from './similar';
 import { handleContainsSql, handleIsSql } from './sql';
 import { handleStartsWith } from './startsWith';
+import { handleToolCallF1 } from './toolCallF1';
 import { handleTraceErrorSpans } from './traceErrorSpans';
 import { handleTraceSpanCount } from './traceSpanCount';
 import { handleTraceSpanDuration } from './traceSpanDuration';
 import { coerceString, getFinalTest, loadFromJavaScriptFile, processFileReference } from './utils';
 import { handleWebhook } from './webhook';
+import { handleWordCount } from './wordCount';
 import { handleIsXml } from './xml';
 
 import type {
@@ -104,6 +110,7 @@ export const MODEL_GRADED_ASSERTION_TYPES = new Set<AssertionType>([
   'llm-rubric',
   'model-graded-closedqa',
   'model-graded-factuality',
+  'search-rubric',
 ]);
 
 const ASSERTION_HANDLERS: Record<
@@ -148,7 +155,7 @@ const ASSERTION_HANDLERS: Record<
   'llm-rubric': handleLlmRubric,
   meteor: async (params: AssertionParams) => {
     try {
-      const { handleMeteorAssertion } = await import('./meteor');
+      const { handleMeteorAssertion } = await import('./meteor.js');
       return handleMeteorAssertion(params);
     } catch (error) {
       if (
@@ -177,15 +184,48 @@ const ASSERTION_HANDLERS: Record<
   regex: handleRegex,
   ruby: handleRuby,
   'rouge-n': handleRougeScore,
+  'search-rubric': handleSearchRubric,
   similar: handleSimilar,
+  'similar:cosine': handleSimilar,
+  'similar:dot': handleSimilar,
+  'similar:euclidean': handleSimilar,
   'starts-with': handleStartsWith,
+  'tool-call-f1': handleToolCallF1,
   'trace-error-spans': handleTraceErrorSpans,
   'trace-span-count': handleTraceSpanCount,
   'trace-span-duration': handleTraceSpanDuration,
   webhook: handleWebhook,
+  'word-count': handleWordCount,
 };
 
 const nunjucks = getNunjucksEngine();
+
+/**
+ * Renders a metric name template with test variables.
+ * @param metric - The metric name, possibly containing Nunjucks template syntax
+ * @param vars - The test variables to use for rendering
+ * @returns The rendered metric name, or the original if rendering fails
+ */
+export function renderMetricName(
+  metric: string | undefined,
+  vars: Record<string, unknown>,
+): string | undefined {
+  if (!metric) {
+    return metric;
+  }
+  try {
+    const rendered = nunjucks.renderString(metric, vars);
+    if (rendered === '' && metric !== '') {
+      logger.debug(`Metric template "${metric}" rendered to empty string`);
+    }
+    return rendered;
+  } catch (error) {
+    logger.warn(
+      `Failed to render metric template "${metric}": ${error instanceof Error ? error.message : error}`,
+    );
+    return metric;
+  }
+}
 
 /**
  * Tests whether an assertion is inverse e.g. "not-equals" is inverse of "equals"
@@ -252,12 +292,14 @@ export async function runAssertion({
   // Add trace data if traceId is available
   if (traceId) {
     try {
-      const { getTraceStore } = await import('../tracing/store');
       const traceStore = getTraceStore();
       const traceData = await traceStore.getTrace(traceId);
       if (traceData) {
         context.trace = {
           traceId: traceData.traceId,
+          evaluationId: traceData.evaluationId,
+          testCaseId: traceData.testCaseId,
+          metadata: traceData.metadata,
           spans: traceData.spans || [],
         };
       }
@@ -267,8 +309,9 @@ export async function runAssertion({
   }
 
   // Render assertion values
+  type ValueFromScriptType = string | boolean | number | GradingResult | object | undefined;
   let renderedValue = assertion.value;
-  let valueFromScript: string | boolean | number | GradingResult | object | undefined;
+  let valueFromScript: ValueFromScriptType;
   if (typeof renderedValue === 'string') {
     if (renderedValue.startsWith('file://')) {
       const basePath = cliState.basePath || '';
@@ -289,10 +332,11 @@ export async function runAssertion({
         logger.debug(`Javascript script ${filePath} output: ${valueFromScript}`);
       } else if (filePath.endsWith('.py')) {
         try {
-          const pythonScriptOutput = await runPython(filePath, functionName || 'get_assert', [
-            output,
-            context,
-          ]);
+          const pythonScriptOutput = await runPython<ValueFromScriptType>(
+            filePath,
+            functionName || 'get_assert',
+            [output, context],
+          );
           valueFromScript = pythonScriptOutput;
           logger.debug(`Python script ${filePath} output: ${valueFromScript}`);
         } catch (error) {
@@ -305,11 +349,12 @@ export async function runAssertion({
         }
       } else if (filePath.endsWith('.rb')) {
         try {
-          const { runRuby } = await import('../ruby/rubyUtils');
-          const rubyScriptOutput = await runRuby(filePath, functionName || 'get_assert', [
-            output,
-            context,
-          ]);
+          const { runRuby } = await import('../ruby/rubyUtils.js');
+          const rubyScriptOutput = await runRuby<ValueFromScriptType>(
+            filePath,
+            functionName || 'get_assert',
+            [output, context],
+          );
           valueFromScript = rubyScriptOutput;
           logger.debug(`Ruby script ${filePath} output: ${valueFromScript}`);
         } catch (error) {
@@ -350,12 +395,60 @@ export async function runAssertion({
     });
   }
 
+  // Centralized script output resolution
+  // Script assertion types (javascript, python, ruby) interpret renderedValue as code to execute
+  // All other types should use the script output as the comparison value
+  const SCRIPT_RESULT_ASSERTIONS = new Set(['javascript', 'python', 'ruby']);
+  const baseType = getAssertionBaseType(assertion);
+
+  if (valueFromScript !== undefined && !SCRIPT_RESULT_ASSERTIONS.has(baseType)) {
+    // Validate the script result type - only javascript/python/ruby can return functions
+    if (typeof valueFromScript === 'function') {
+      throw new Error(
+        `Script for "${assertion.type}" assertion returned a function. ` +
+          `Only javascript/python/ruby assertion types can return functions. ` +
+          `For other assertion types, return the expected value (string, number, array, or object).`,
+      );
+    }
+
+    // Validate the script didn't return boolean or GradingResult
+    // These are only valid for javascript/python/ruby assertion types
+    if (typeof valueFromScript === 'boolean') {
+      throw new Error(
+        `Script for "${assertion.type}" assertion returned a boolean. ` +
+          `Only javascript/python/ruby assertion types can return boolean values. ` +
+          `For other assertion types, return the expected value (string, number, array, or object).`,
+      );
+    }
+
+    // Check if it's a GradingResult object (has 'pass' property)
+    if (
+      valueFromScript &&
+      typeof valueFromScript === 'object' &&
+      !Array.isArray(valueFromScript) &&
+      'pass' in valueFromScript
+    ) {
+      throw new Error(
+        `Script for "${assertion.type}" assertion returned a GradingResult. ` +
+          `Only javascript/python/ruby assertion types can return GradingResult objects. ` +
+          `For other assertion types, return the expected value (string, number, array, or object).`,
+      );
+    }
+
+    // Update renderedValue with the script output
+    // Type assertion is now safe because we've validated the type
+    renderedValue = valueFromScript as AssertionValue;
+  }
+
   // Construct CallApiContextParams for model-graded assertions that need originalProvider
+  // Generate traceparent for grader calls to link them to the main trace
+  const graderTraceparent = traceId ? generateTraceparent(traceId, generateSpanId()) : undefined;
   const providerCallContext: CallApiContextParams | undefined = provider
     ? {
         originalProvider: provider,
         prompt: { raw: prompt || '', label: '' },
         vars: test.vars || {},
+        ...(graderTraceparent && { traceparent: graderTraceparent }),
       }
     : undefined;
 
@@ -490,7 +583,7 @@ export async function runAssertions({
       assertResult.addResult({
         index,
         result,
-        metric: assertion.metric,
+        metric: renderMetricName(assertion.metric, test.vars || {}),
         weight: assertion.weight,
       });
     },
@@ -506,7 +599,7 @@ export async function runAssertions({
     mainAssertResult.addResult({
       index,
       result,
-      metric,
+      metric: renderMetricName(metric, test.vars || {}),
       weight,
     });
   });

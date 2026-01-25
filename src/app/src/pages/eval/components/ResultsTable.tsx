@@ -1,28 +1,32 @@
 import React, { useEffect, useRef } from 'react';
 
 import ErrorBoundary from '@app/components/ErrorBoundary';
+import { Button } from '@app/components/ui/button';
+import { Checkbox } from '@app/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@app/components/ui/select';
+import { Spinner } from '@app/components/ui/spinner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@app/components/ui/tooltip';
+import { ROUTES } from '@app/constants/routes';
 import { useToast } from '@app/hooks/useToast';
+import { cn } from '@app/lib/utils';
 import { callApi } from '@app/utils/api';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import CloseIcon from '@mui/icons-material/Close';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
-import CircularProgress from '@mui/material/CircularProgress';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import IconButton from '@mui/material/IconButton';
-import MenuItem from '@mui/material/MenuItem';
-import Select from '@mui/material/Select';
-import { alpha } from '@mui/material/styles';
-import Tooltip from '@mui/material/Tooltip';
-import Typography from '@mui/material/Typography';
-import { FILE_METADATA_KEY } from '@promptfoo/constants';
+import { normalizeMediaText, resolveAudioSource, resolveImageSource } from '@app/utils/media';
+import { getActualPrompt } from '@app/utils/providerResponse';
+import { FILE_METADATA_KEY, HUMAN_ASSERTION_TYPE } from '@promptfoo/providers/constants';
 import {
   type EvalResultsFilterMode,
   type EvaluateTable,
   type EvaluateTableOutput,
   type EvaluateTableRow,
+  type GradingResult,
+  type ProviderOptions,
+  type Vars,
 } from '@promptfoo/types';
 import invariant from '@promptfoo/util/invariant';
 import {
@@ -31,26 +35,83 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import yaml from 'js-yaml';
-import ReactMarkdown from 'react-markdown';
+import { ArrowLeft, ArrowRight, ExternalLink, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import remarkGfm from 'remark-gfm';
 import CustomMetrics from './CustomMetrics';
 import CustomMetricsDialog from './CustomMetricsDialog';
 import EvalOutputCell from './EvalOutputCell';
 import EvalOutputPromptDialog from './EvalOutputPromptDialog';
-import MarkdownErrorBoundary from './MarkdownErrorBoundary';
+import { useFilterMode } from './FilterModeProvider';
+import { ProviderDisplay } from './ProviderDisplay';
+import { type ProviderDef } from './providerConfig';
 import { useResultsViewSettingsStore, useTableStore } from './store';
 import TruncatedText from './TruncatedText';
-import type { CellContext, ColumnDef, VisibilityState } from '@tanstack/table-core';
+import VariableMarkdownCell from './VariableMarkdownCell';
+import type {
+  CellContext,
+  ColumnDef,
+  ColumnSizingState,
+  VisibilityState,
+} from '@tanstack/table-core';
 
 import type { TruncatedTextProps } from './TruncatedText';
 import './ResultsTable.css';
 
-import { BaseNumberInput } from '@app/components/form/input/BaseNumberInput';
-import ButtonGroup from '@mui/material/ButtonGroup';
+import { NumberInput } from '@app/components/ui/number-input';
+import { isBlobRef, isStorageRef, resolveAudioUrl } from '@app/utils/mediaStorage';
 import { isEncodingStrategy } from '@promptfoo/redteam/constants/strategies';
-import { usePassingTestCounts, usePassRates, useTestCounts } from './hooks';
+import { useMetricsGetter, usePassingTestCounts, usePassRates, useTestCounts } from './hooks';
+
+/**
+ * Audio player component that handles both storage refs and base64 data
+ */
+function StorageRefAudioPlayer({ data, format = 'mp3' }: { data: string; format?: string }) {
+  const [audioUrl, setAudioUrl] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(isStorageRef(data) || isBlobRef(data));
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    if (isStorageRef(data) || isBlobRef(data)) {
+      setLoading(true);
+      resolveAudioUrl(data, format).then((url) => {
+        if (!cancelled) {
+          setAudioUrl(url);
+          setLoading(false);
+        }
+      });
+    } else {
+      // Inline base64
+      const url = data.startsWith('data:') ? data : `data:audio/${format};base64,${data}`;
+      setAudioUrl(url);
+      setLoading(false);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data, format]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-0.5">
+        <Spinner className="size-4" />
+        <span className="text-xs text-muted-foreground">Loading audio...</span>
+      </div>
+    );
+  }
+
+  if (!audioUrl) {
+    return <span className="text-xs text-destructive">Failed to load audio</span>;
+  }
+
+  return (
+    <audio controls style={{ maxWidth: '100%', height: '32px' }}>
+      <source src={audioUrl} type={`audio/${format}`} />
+      Your browser does not support the audio element.
+    </audio>
+  );
+}
 
 const VARIABLE_COLUMN_SIZE_PX = 200;
 const PROMPT_COLUMN_SIZE_PX = 400;
@@ -92,15 +153,24 @@ function TableHeader({
     setPromptOpen(false);
   };
   return (
-    <div className={`${className || ''}`}>
-      <TruncatedText text={text} maxLength={maxLength} />
+    <div className={`${className || ''} flex items-center gap-1`}>
+      {expandedText ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className="text-left cursor-pointer transition-colors px-2 py-1.5 -mx-2 rounded-md bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground font-mono text-[13px]"
+              onClick={handlePromptOpen}
+            >
+              <span className="line-clamp-3">{text}</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>View prompt</TooltipContent>
+        </Tooltip>
+      ) : (
+        <TruncatedText text={text} maxLength={maxLength} />
+      )}
       {expandedText && (
         <>
-          <Tooltip title="View prompt">
-            <button className="action" onClick={handlePromptOpen}>
-              🔎
-            </button>
-          </Tooltip>
           {promptOpen && (
             <EvalOutputPromptDialog
               open={promptOpen}
@@ -109,12 +179,13 @@ function TableHeader({
             />
           )}
           {resourceId && (
-            <Tooltip title="View other evals and datasets for this prompt">
-              <span className="action">
-                <Link to={`/prompts/?id=${resourceId}`} target="_blank">
-                  <OpenInNewIcon fontSize="small" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link to={ROUTES.PROMPT_DETAIL(resourceId)} target="_blank" className="action">
+                  <ExternalLink className="size-4" />
                 </Link>
-              </span>
+              </TooltipTrigger>
+              <TooltipContent>View other evals and datasets for this prompt</TooltipContent>
             </Tooltip>
           )}
         </>
@@ -152,73 +223,81 @@ function ResultsTableHeader({
   theadRef,
   stickyHeader,
   setStickyHeader,
+  hasMinimalScrollRoom,
   zoom,
 }: {
   reactTable: ReturnType<typeof useReactTable<EvaluateTableRow>>;
   tableWidth: number;
   maxTextLength: number;
   wordBreak: 'break-word' | 'break-all';
-  theadRef: React.RefObject<HTMLTableSectionElement>;
+  theadRef: React.RefObject<HTMLTableSectionElement | null>;
   stickyHeader: boolean;
   setStickyHeader: (sticky: boolean) => void;
+  hasMinimalScrollRoom: boolean;
   zoom: number;
 }) {
+  'use no memo';
   return (
-    <table
-      className={`results-table firefox-fix ${maxTextLength <= 25 ? 'compact' : ''} ${
-        stickyHeader && 'results-table-sticky'
-      }`}
-      style={{
-        wordBreak,
-        width: `${tableWidth}px`,
-        zoom,
-      }}
+    <div
+      data-testid="results-table-header"
+      className={cn(
+        'relative',
+        stickyHeader && 'results-table-sticky',
+        hasMinimalScrollRoom && 'minimal-scroll-room',
+      )}
     >
-      <thead ref={theadRef}>
-        {stickyHeader && (
-          <div className="header-dismiss">
-            <IconButton
-              onClick={() => setStickyHeader(false)}
-              size="small"
-              sx={{ color: 'text.primary' }}
-            >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </div>
-        )}
-        {reactTable.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id} className="header">
-            {headerGroup.headers.map((header) => {
-              const isMetadataCol =
-                header.column.id.startsWith('Variable') || header.column.id === 'description';
-              const isFinalRow = headerGroup.depth === 1;
+      <div className="header-dismiss" style={{ display: stickyHeader ? undefined : 'none' }}>
+        <button
+          type="button"
+          onClick={() => setStickyHeader(false)}
+          className="p-1.5 rounded hover:bg-muted hover:text-foreground transition-colors"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <table
+        className={`results-table firefox-fix ${maxTextLength <= 25 ? 'compact' : ''}`}
+        style={{
+          wordBreak,
+          width: `${tableWidth}px`,
+          zoom,
+        }}
+      >
+        <thead ref={theadRef}>
+          {reactTable.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id} className="header">
+              {headerGroup.headers.map((header) => {
+                const isMetadataCol =
+                  header.column.id.startsWith('Variable') || header.column.id === 'description';
+                const isFinalRow = headerGroup.depth === 1;
 
-              return (
-                <th
-                  key={header.id}
-                  tabIndex={0}
-                  colSpan={header.colSpan}
-                  style={{
-                    width: header.getSize(),
-                    borderBottom: !isMetadataCol && isFinalRow ? '2px solid #888' : 'none',
-                    height: isFinalRow ? 'fit-content' : 'auto',
-                  }}
-                >
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
-                  <div
-                    onMouseDown={header.getResizeHandler()}
-                    onTouchStart={header.getResizeHandler()}
-                    className={`resizer ${header.column.getIsResizing() ? 'isResizing' : ''}`}
-                  />
-                </th>
-              );
-            })}
-          </tr>
-        ))}
-      </thead>
-    </table>
+                return (
+                  <th
+                    key={header.id}
+                    tabIndex={0}
+                    colSpan={header.colSpan}
+                    style={{
+                      width: header.getSize(),
+                      borderBottom: !isMetadataCol && isFinalRow ? '2px solid #888' : 'none',
+                      height: isFinalRow ? 'fit-content' : 'auto',
+                    }}
+                  >
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.header, header.getContext())}
+                    <div
+                      onMouseDown={header.getResizeHandler()}
+                      onTouchStart={header.getResizeHandler()}
+                      className={`resizer ${header.column.getIsResizing() ? 'isResizing' : ''}`}
+                    />
+                  </th>
+                );
+              })}
+            </tr>
+          ))}
+        </thead>
+      </table>
+    </div>
   );
 }
 
@@ -233,6 +312,7 @@ function ResultsTable({
   onFailureFilterToggle,
   zoom,
 }: ResultsTableProps) {
+  'use no memo';
   const {
     evalId,
     table,
@@ -243,9 +323,9 @@ function ResultsTable({
     fetchEvalData,
     isFetching,
     filters,
-    setFilterMode,
   } = useTableStore();
   const { inComparisonMode, comparisonEvalIds } = useResultsViewSettingsStore();
+  const { setFilterMode } = useFilterMode();
 
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -269,6 +349,10 @@ function ResultsTable({
     pageSize: filteredResultsCount > 10 ? 50 : 10,
   });
 
+  // Persist column sizing state to prevent header resize flicker during pagination.
+  // Without this, column widths reset when columns memo recalculates (due to deps like passRates changing).
+  const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({});
+
   /**
    * Reset the pagination state when the filtered results count changes.
    */
@@ -284,12 +368,13 @@ function ResultsTable({
     setLightboxOpen(!lightboxOpen);
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   const handleRating = React.useCallback(
     async (
       rowIndex: number,
       promptIndex: number,
       resultId: string,
-      isPass?: boolean,
+      isPass?: boolean | null,
       score?: number,
       comment?: string,
     ) => {
@@ -298,20 +383,18 @@ function ResultsTable({
       const updatedOutputs = [...updatedRow.outputs];
       const existingOutput = updatedOutputs[promptIndex];
 
-      const finalPass = typeof isPass === 'undefined' ? existingOutput.pass : isPass;
-
-      let finalScore = existingOutput.score;
-      if (typeof score !== 'undefined') {
-        finalScore = score;
-      } else if (typeof isPass !== 'undefined') {
-        finalScore = isPass ? 1 : 0;
-      }
-
-      updatedOutputs[promptIndex].pass = finalPass;
-      updatedOutputs[promptIndex].score = finalScore;
-
       let componentResults = existingOutput.gradingResult?.componentResults;
       let modifiedComponentResults = false;
+      let finalPass = existingOutput.pass;
+      let finalScore = existingOutput.score;
+
+      // Update finalScore first if score parameter is provided
+      if (typeof score !== 'undefined') {
+        finalScore = score;
+      } else if (typeof isPass !== 'undefined' && isPass !== null) {
+        // Only default to 0/1 if no explicit score is provided and isPass is not null
+        finalScore = isPass ? 1 : 0;
+      }
 
       if (typeof isPass !== 'undefined') {
         // Make a copy to avoid mutating the original
@@ -319,30 +402,55 @@ function ResultsTable({
         modifiedComponentResults = true;
 
         const humanResultIndex = componentResults.findIndex(
-          (result) => result.assertion?.type === 'human',
+          (result) => result.assertion?.type === HUMAN_ASSERTION_TYPE,
         );
 
-        const newResult = {
-          pass: finalPass,
-          score: finalScore,
-          reason: 'Manual result (overrides all other grading results)',
-          comment,
-          assertion: { type: 'human' as const },
-        };
-
-        if (humanResultIndex === -1) {
-          componentResults.push(newResult);
+        // If isPass is null, remove the human assertion (unset manual grading)
+        if (isPass === null) {
+          if (humanResultIndex !== -1) {
+            componentResults.splice(humanResultIndex, 1);
+          }
+          // Recalculate pass/score from remaining assertions
+          if (componentResults.length > 0) {
+            const passCount = componentResults.filter((r) => r.pass).length;
+            finalPass = passCount === componentResults.length;
+            // Calculate average score from remaining assertions
+            const scores = componentResults
+              .map((r) => r.score)
+              .filter((s) => typeof s === 'number');
+            if (scores.length > 0) {
+              finalScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+            }
+          }
         } else {
-          componentResults[humanResultIndex] = newResult;
+          // Add or update the human assertion
+          finalPass = isPass;
+
+          const newResult = {
+            pass: finalPass,
+            score: finalScore,
+            reason: 'Manual result (overrides all other grading results)',
+            comment,
+            assertion: { type: HUMAN_ASSERTION_TYPE },
+          };
+
+          if (humanResultIndex === -1) {
+            componentResults.push(newResult);
+          } else {
+            componentResults[humanResultIndex] = newResult;
+          }
         }
       }
+
+      updatedOutputs[promptIndex].pass = finalPass;
+      updatedOutputs[promptIndex].score = finalScore;
 
       // Build gradingResult, ensuring required fields are always present
       // Destructure to exclude componentResults initially
       const { componentResults: _, ...existingGradingResultWithoutComponents } =
         existingOutput.gradingResult || {};
 
-      const gradingResult = {
+      const gradingResult: GradingResult = {
         // Copy over existing fields except componentResults
         ...existingGradingResultWithoutComponents,
         // Ensure required fields have valid values
@@ -365,13 +473,13 @@ function ResultsTable({
 
       // Only include componentResults if we modified them, or if we didn't modify them but they exist and are not empty
       if (modifiedComponentResults && componentResults) {
-        (gradingResult as any).componentResults = componentResults;
+        gradingResult.componentResults = componentResults;
       } else if (
         !modifiedComponentResults &&
         existingOutput.gradingResult?.componentResults &&
         existingOutput.gradingResult.componentResults.length > 0
       ) {
-        (gradingResult as any).componentResults = existingOutput.gradingResult.componentResults;
+        gradingResult.componentResults = existingOutput.gradingResult.componentResults;
       }
 
       updatedOutputs[promptIndex].gradingResult = gradingResult;
@@ -468,8 +576,10 @@ function ResultsTable({
     );
   }, [filters.values]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   React.useEffect(() => {
-    setPagination({ ...pagination, pageIndex: 0 });
+    // Use functional update to avoid stale closure over pagination state
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [failureFilter, filterMode, debouncedSearchText, appliedFiltersString]);
 
   // Add a ref to track the current evalId to compare with new values
@@ -479,7 +589,8 @@ function ResultsTable({
   // allow the fetch effect to skip the first fetch after an eval switch.
   React.useEffect(() => {
     if (evalId !== previousEvalIdRef.current) {
-      setPagination({ pageIndex: 0, pageSize: pagination.pageSize });
+      // Use functional update to avoid stale closure over pagination state
+      setPagination((prev) => ({ pageIndex: 0, pageSize: prev.pageSize }));
 
       // Don't fetch here - the parent component (Eval.tsx) is responsible
       // for the initial data load when changing evalId
@@ -487,6 +598,7 @@ function ResultsTable({
   }, [evalId]);
 
   // Only fetch data when pagination or filters change, but not when evalId changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   React.useEffect(() => {
     if (!evalId) {
       return;
@@ -542,23 +654,30 @@ function ResultsTable({
   const testCounts = useTestCounts();
   const passingTestCounts = usePassingTestCounts();
   const passRates = usePassRates();
+  const getMetrics = useMetricsGetter();
 
   const numAsserts = React.useMemo(
     () =>
-      head.prompts.map(
-        (prompt) => (prompt.metrics?.assertFailCount ?? 0) + (prompt.metrics?.assertPassCount ?? 0),
-      ),
-    [head.prompts, body],
+      head.prompts.map((_, idx) => {
+        const { total: metrics } = getMetrics(idx);
+        return (metrics?.assertFailCount ?? 0) + (metrics?.assertPassCount ?? 0);
+      }),
+    [head.prompts, getMetrics],
   );
 
   const numGoodAsserts = React.useMemo(
-    () => head.prompts.map((prompt) => prompt.metrics?.assertPassCount || 0),
-    [head.prompts, body],
+    () =>
+      head.prompts.map((_, idx) => {
+        const { total: metrics } = getMetrics(idx);
+        return metrics?.assertPassCount || 0;
+      }),
+    [head.prompts, getMetrics],
   );
 
   const columnHelper = React.useMemo(() => createColumnHelper<EvaluateTableRow>(), []);
 
   const { renderMarkdown } = useResultsViewSettingsStore();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   const variableColumns = React.useMemo(() => {
     if (head.vars.length > 0) {
       const injectVarName = config?.redteam?.injectVar || 'prompt';
@@ -578,15 +697,14 @@ function ResultsTable({
                 const _originalValue = value; // Store original value for tooltip
                 const row = info.row.original;
 
-                // For red team evals, show the final injected prompt for the configured inject variable
-                // This replaces the original prompt with what was actually sent to the model
+                // For red team evals and dynamic prompts, show the actual prompt sent to the model
+                // Priority: 1) response.prompt (provider-reported), 2) redteamFinalPrompt (legacy)
                 if (varName === injectVarName) {
-                  // Check all outputs to find one with redteamFinalPrompt metadata
+                  // Check all outputs to find one with provider-reported prompt or redteamFinalPrompt
                   for (const output of row.outputs || []) {
-                    // Check if redteamFinalPrompt exists
-                    if (output?.metadata?.redteamFinalPrompt) {
-                      // Replace the original prompt with the injected version
-                      value = output.metadata.redteamFinalPrompt;
+                    const actualPrompt = getActualPrompt(output?.response);
+                    if (actualPrompt) {
+                      value = actualPrompt;
                       break;
                     }
                   }
@@ -605,33 +723,46 @@ function ResultsTable({
                   const mediaMetadata = fileMetadata[varName];
                   const mediaType = mediaMetadata.type;
                   const format = mediaMetadata.format || '';
-                  const mediaDataUrl = value.startsWith('data:')
-                    ? value
-                    : `data:${mediaType}/${format};base64,${value}`;
+                  const normalizedValue = normalizeMediaText(value);
+                  const audioSource =
+                    mediaType === 'audio'
+                      ? resolveAudioSource({ data: value, format, blobRef: value })
+                      : null;
+                  const imageSrc =
+                    mediaType === 'image'
+                      ? resolveImageSource({ data: value, format, blobRef: value })
+                      : undefined;
 
                   let mediaElement = null;
 
-                  if (mediaType === 'audio') {
+                  if (mediaType === 'audio' && audioSource) {
                     mediaElement = (
                       <audio controls style={{ maxWidth: '100%' }}>
-                        <source src={mediaDataUrl} type={`audio/${format}`} />
+                        <source src={audioSource.src} type={audioSource.type || 'audio/mpeg'} />
                         Your browser does not support the audio element.
                       </audio>
                     );
                   } else if (mediaType === 'video') {
+                    const mediaSrc =
+                      normalizedValue.startsWith('data:') ||
+                      normalizedValue.startsWith('http') ||
+                      normalizedValue.startsWith('/api/')
+                        ? normalizedValue
+                        : `data:${mediaType}/${format};base64,${value}`;
+
                     mediaElement = (
                       <video controls style={{ maxWidth: '100%', maxHeight: '200px' }}>
-                        <source src={mediaDataUrl} type={`video/${format}`} />
+                        <source src={mediaSrc} type={`video/${format || 'mp4'}`} />
                         Your browser does not support the video element.
                       </video>
                     );
-                  } else if (mediaType === 'image') {
+                  } else if (mediaType === 'image' && imageSrc) {
                     mediaElement = (
                       <img
-                        src={mediaDataUrl}
+                        src={imageSrc}
                         alt="Input image"
                         style={{ maxWidth: '100%', maxHeight: '200px' }}
-                        onClick={() => toggleLightbox?.(mediaDataUrl)}
+                        onClick={() => toggleLightbox?.(imageSrc)}
                       />
                     );
                   }
@@ -640,10 +771,13 @@ function ResultsTable({
                     return (
                       <div className="cell">
                         <div style={{ marginBottom: '8px' }}>{mediaElement}</div>
-                        <Tooltip title="Original file path">
-                          <span style={{ fontSize: '0.8em', color: '#666' }}>
-                            {mediaMetadata.path} ({mediaType}/{format})
-                          </span>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span style={{ fontSize: '0.8em', color: '#666' }}>
+                              {mediaMetadata.path} ({mediaType}/{format})
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Original file path</TooltipContent>
                         </Tooltip>
                       </div>
                     );
@@ -656,19 +790,17 @@ function ResultsTable({
                     value = `\`\`\`json\n${value}\n\`\`\``;
                   }
                 }
+                // Use memoized VariableMarkdownCell to prevent re-renders when
+                // table layout changes (e.g., column visibility toggles).
+                // @see https://github.com/promptfoo/promptfoo/issues/969
                 const cellContent = renderMarkdown ? (
-                  <MarkdownErrorBoundary fallback={value}>
-                    <TruncatedText
-                      text={<ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>}
-                      maxLength={maxTextLength}
-                    />
-                  </MarkdownErrorBoundary>
+                  <VariableMarkdownCell value={value} maxTextLength={maxTextLength} />
                 ) : (
                   <TruncatedText text={value} maxLength={maxTextLength} />
                 );
 
                 // Determine if we should show original text (decoded) even without redteamFinalPrompt
-                const testMetadata = (row as any)?.test?.metadata || {};
+                const testMetadata: Record<string, unknown> = row.test?.metadata || {};
                 const metadataOriginal =
                   typeof testMetadata.originalText === 'string'
                     ? testMetadata.originalText
@@ -676,29 +808,58 @@ function ResultsTable({
                 const strategyId = testMetadata.strategyId;
                 const shouldShowOriginal =
                   varName === injectVarName &&
+                  typeof strategyId === 'string' &&
                   isEncodingStrategy(strategyId) &&
                   Boolean(metadataOriginal);
 
                 // Show original text for encoding strategies
                 if (shouldShowOriginal) {
                   const originalForDisplay = metadataOriginal || '';
+                  // Check if value is a storage ref or base64 for audio/image
+                  const isAudioContent =
+                    strategyId === 'audio' ||
+                    (typeof value === 'string' &&
+                      (isStorageRef(value) || isBlobRef(value)) &&
+                      value.includes('audio/'));
+                  const isImageContent =
+                    strategyId === 'image' ||
+                    (typeof value === 'string' &&
+                      (isStorageRef(value) || isBlobRef(value)) &&
+                      value.includes('image/'));
+
                   return (
                     <div className="cell" data-capture="true">
-                      {cellContent}
-                      {originalForDisplay && String(originalForDisplay) !== String(value) && (
-                        <Box
-                          sx={{
-                            marginTop: '6px',
-                            color: 'text.secondary',
-                            fontSize: '0.8em',
-                          }}
-                        >
+                      {/* For audio: show player instead of raw base64/storageRef */}
+                      {isAudioContent && typeof value === 'string' ? (
+                        <div>
+                          <StorageRefAudioPlayer data={value} />
+                        </div>
+                      ) : isImageContent ? (
+                        /* For image: show image or placeholder */
+                        <div>
+                          {typeof value === 'string' &&
+                          (isStorageRef(value) || isBlobRef(value)) ? (
+                            <span className="text-xs text-muted-foreground">
+                              Image preview not yet supported for storage refs
+                            </span>
+                          ) : (
+                            cellContent
+                          )}
+                        </div>
+                      ) : (
+                        /* For other encoding strategies: show raw content */
+                        cellContent
+                      )}
+
+                      {/* Show original decoded text */}
+                      {originalForDisplay && (
+                        <div className="mt-1.5 text-muted-foreground text-[0.8em]">
                           <strong>Original (decoded):</strong>{' '}
                           <TruncatedText
                             text={String(originalForDisplay)}
                             maxLength={maxTextLength}
                           />
-                        </Box>
+                        </div>
                       )}
                     </div>
                   );
@@ -717,7 +878,7 @@ function ResultsTable({
       ];
     }
     return [];
-  }, [columnHelper, head.vars, maxTextLength, renderMarkdown, config]);
+  }, [columnHelper, head, head.vars, maxTextLength, renderMarkdown, config]);
 
   const getOutput = React.useCallback(
     (rowIndex: number, promptIndex: number) => {
@@ -760,6 +921,7 @@ function ResultsTable({
     return totals;
   }, [table?.head?.prompts, table?.body]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   const promptColumns = React.useMemo(() => {
     return [
       columnHelper.group({
@@ -769,16 +931,19 @@ function ResultsTable({
           columnHelper.accessor((row: EvaluateTableRow) => formatRowOutput(row.outputs[idx]), {
             id: `Prompt ${idx + 1}`,
             header: () => {
-              const pct = passRates[idx] ? passRates[idx].toFixed(2) : '0.00';
+              const pct = passRates[idx]?.total?.toFixed(2) ?? '0.00';
               const columnId = `Prompt ${idx + 1}`;
               const isChecked = failureFilter[columnId] || false;
 
+              // Get metrics for this prompt (total and filtered)
+              const { total: metrics, filtered: filteredMetrics } = getMetrics(idx);
+
               const details = showStats ? (
                 <div className="prompt-detail collapse-hidden">
-                  {prompt.metrics?.tokenUsage?.numRequests !== undefined && (
+                  {metrics?.tokenUsage?.numRequests !== undefined && (
                     <div>
                       <strong>{isRedteam ? 'Probes:' : 'Requests:'}</strong>{' '}
-                      {prompt.metrics.tokenUsage.numRequests}
+                      {metrics.tokenUsage.numRequests}
                     </div>
                   )}
                   {numAsserts[idx] ? (
@@ -786,138 +951,186 @@ function ResultsTable({
                       <strong>Asserts:</strong> {numGoodAsserts[idx]}/{numAsserts[idx]} passed
                     </div>
                   ) : null}
-                  {prompt.metrics?.cost ? (
+                  {metrics?.cost ? (
                     <div>
                       <strong>Total Cost:</strong>{' '}
-                      <Tooltip
-                        title={`Average: $${Intl.NumberFormat(undefined, {
-                          minimumFractionDigits: 1,
-                          maximumFractionDigits:
-                            testCounts[idx] && prompt.metrics.cost / testCounts[idx] >= 1 ? 2 : 4,
-                        }).format(
-                          testCounts[idx] ? prompt.metrics.cost / testCounts[idx] : 0,
-                        )} per test`}
-                      >
-                        <span style={{ cursor: 'help' }}>
-                          $
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span style={{ cursor: 'help' }}>
+                            $
+                            {Intl.NumberFormat(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: metrics.cost >= 1 ? 2 : 4,
+                            }).format(metrics.cost)}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {`Average: $${Intl.NumberFormat(undefined, {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits:
+                              testCounts[idx]?.total && metrics.cost / testCounts[idx].total >= 1
+                                ? 2
+                                : 4,
+                          }).format(
+                            testCounts[idx]?.total ? metrics.cost / testCounts[idx].total : 0,
+                          )} per test`}
+                        </TooltipContent>
+                      </Tooltip>
+                      {filteredMetrics?.cost && testCounts[idx]?.filtered ? (
+                        <span style={{ fontSize: '0.9em', color: '#666', marginLeft: '4px' }}>
+                          ($
                           {Intl.NumberFormat(undefined, {
                             minimumFractionDigits: 2,
-                            maximumFractionDigits: prompt.metrics.cost >= 1 ? 2 : 4,
-                          }).format(prompt.metrics.cost)}
+                            maximumFractionDigits: filteredMetrics.cost >= 1 ? 2 : 4,
+                          }).format(filteredMetrics.cost)}{' '}
+                          filtered)
                         </span>
-                      </Tooltip>
+                      ) : null}
                     </div>
                   ) : null}
-                  {prompt.metrics?.tokenUsage?.total ? (
+                  {metrics?.tokenUsage?.total ? (
                     <div>
                       <strong>Total Tokens:</strong>{' '}
                       {Intl.NumberFormat(undefined, {
                         maximumFractionDigits: 0,
-                      }).format(prompt.metrics.tokenUsage.total)}
+                      }).format(metrics.tokenUsage.total)}
+                      {filteredMetrics?.tokenUsage?.total ? (
+                        <span style={{ fontSize: '0.9em', color: '#666', marginLeft: '4px' }}>
+                          (
+                          {Intl.NumberFormat(undefined, {
+                            maximumFractionDigits: 0,
+                          }).format(filteredMetrics.tokenUsage.total)}{' '}
+                          filtered)
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
 
-                  {prompt.metrics?.tokenUsage?.total ? (
+                  {metrics?.tokenUsage?.total ? (
                     <div>
                       <strong>Avg Tokens:</strong>{' '}
                       {Intl.NumberFormat(undefined, {
                         maximumFractionDigits: 0,
                       }).format(
-                        testCounts[idx] ? prompt.metrics.tokenUsage.total / testCounts[idx] : 0,
+                        testCounts[idx]?.total
+                          ? metrics.tokenUsage.total / testCounts[idx].total
+                          : 0,
                       )}
+                      {filteredMetrics?.tokenUsage?.total && testCounts[idx]?.filtered ? (
+                        <span style={{ fontSize: '0.9em', color: '#666', marginLeft: '4px' }}>
+                          (
+                          {Intl.NumberFormat(undefined, {
+                            maximumFractionDigits: 0,
+                          }).format(
+                            filteredMetrics.tokenUsage.total / testCounts[idx].filtered,
+                          )}{' '}
+                          filtered)
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
-                  {prompt.metrics?.totalLatencyMs ? (
+                  {metrics?.totalLatencyMs ? (
                     <div>
                       <strong>Avg Latency:</strong>{' '}
                       {Intl.NumberFormat(undefined, {
                         maximumFractionDigits: 0,
                       }).format(
-                        testCounts[idx] ? prompt.metrics.totalLatencyMs / testCounts[idx] : 0,
+                        testCounts[idx]?.total ? metrics.totalLatencyMs / testCounts[idx].total : 0,
                       )}{' '}
                       ms
+                      {filteredMetrics?.totalLatencyMs && testCounts[idx]?.filtered ? (
+                        <span style={{ fontSize: '0.9em', color: '#666', marginLeft: '4px' }}>
+                          (
+                          {Intl.NumberFormat(undefined, {
+                            maximumFractionDigits: 0,
+                          }).format(filteredMetrics.totalLatencyMs / testCounts[idx].filtered)}{' '}
+                          ms filtered)
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
-                  {prompt.metrics?.totalLatencyMs && prompt.metrics?.tokenUsage?.completion ? (
+                  {metrics?.totalLatencyMs && metrics?.tokenUsage?.completion ? (
                     <div>
                       <strong>Tokens/Sec:</strong>{' '}
-                      {prompt.metrics.totalLatencyMs > 0
+                      {metrics.totalLatencyMs > 0
                         ? Intl.NumberFormat(undefined, {
                             maximumFractionDigits: 0,
-                          }).format(
-                            prompt.metrics.tokenUsage.completion /
-                              (prompt.metrics.totalLatencyMs / 1000),
-                          )
+                          }).format(metrics.tokenUsage.completion / (metrics.totalLatencyMs / 1000))
                         : '0'}
                     </div>
                   ) : null}
                 </div>
               ) : null;
-              const providerConfig = Array.isArray(config?.providers)
-                ? config.providers[idx]
-                : undefined;
+              // Get provider string, handling both string and object formats
+              const providerString =
+                typeof prompt.provider === 'string'
+                  ? prompt.provider
+                  : typeof prompt.provider === 'object' && prompt.provider !== null
+                    ? (prompt.provider as ProviderOptions).id || JSON.stringify(prompt.provider)
+                    : String(prompt.provider || 'Unknown provider');
 
-              let providerParts: string[] = [];
-              try {
-                if (prompt.provider && typeof prompt.provider === 'string') {
-                  providerParts = prompt.provider.split(':');
-                } else if (prompt.provider) {
-                  const providerObj = prompt.provider as any; // Use any for flexible typing
-                  const providerId =
-                    typeof providerObj === 'object' && providerObj !== null
-                      ? providerObj.id || JSON.stringify(providerObj)
-                      : String(providerObj);
-                  providerParts = [providerId];
-                }
-              } catch (error) {
-                console.error('Error parsing provider:', error);
-                providerParts = ['Error parsing provider'];
-              }
-
-              const providerDisplay = (
-                <Tooltip title={providerConfig ? <pre>{yaml.dump(providerConfig)}</pre> : ''}>
-                  {providerParts.length > 1 ? (
-                    <>
-                      {providerParts[0]}:<strong>{providerParts.slice(1).join(':')}</strong>
-                    </>
-                  ) : (
-                    <strong>{providerParts[0] || 'Unknown provider'}</strong>
-                  )}
-                </Tooltip>
-              );
               return (
                 <div className="output-header">
                   <div className="pills collapse-font-small">
-                    {prompt.provider ? <div className="provider">{providerDisplay}</div> : null}
+                    {prompt.provider ? (
+                      <div className="provider">
+                        <ProviderDisplay
+                          providerString={providerString}
+                          providersArray={config?.providers as ProviderDef[] | undefined}
+                          fallbackIndex={idx}
+                        />
+                      </div>
+                    ) : null}
                     <div className="summary">
                       <div
                         className={`highlight ${
-                          passRates[idx]
-                            ? `success-${Math.round(passRates[idx] / 20) * 20}`
-                            : 'success-0'
+                          passRates[idx]?.filtered !== null
+                            ? `success-${Math.round((passRates[idx].filtered ?? 0) / 20) * 20}`
+                            : passRates[idx]?.total
+                              ? `success-${Math.round(passRates[idx].total / 20) * 20}`
+                              : 'success-0'
                         }`}
                       >
-                        <strong>{pct}% passing</strong> ({passingTestCounts[idx]}/{testCounts[idx]}{' '}
-                        cases)
+                        {passRates[idx]?.filtered !== null ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>
+                                <strong>{passRates[idx].filtered?.toFixed(2)}% passing</strong> (
+                                {passingTestCounts[idx]?.filtered}/{testCounts[idx]?.filtered}{' '}
+                                filtered, {passingTestCounts[idx]?.total}/{testCounts[idx]?.total}{' '}
+                                total)
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {`Filtered: ${passingTestCounts[idx]?.filtered}/${testCounts[idx]?.filtered} passing (${passRates[idx].filtered?.toFixed(2)}%). Total: ${passingTestCounts[idx]?.total}/${testCounts[idx]?.total} passing (${passRates[idx]?.total?.toFixed(2)}%)`}
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <>
+                            <strong>{pct}% passing</strong> ({passingTestCounts[idx]?.total}/
+                            {testCounts[idx]?.total} cases)
+                          </>
+                        )}
                       </div>
                     </div>
-                    {prompt.metrics?.testErrorCount && prompt.metrics.testErrorCount > 0 ? (
+                    {metrics?.testErrorCount && metrics.testErrorCount > 0 ? (
                       <div className="summary error-pill" onClick={() => setFilterMode('errors')}>
                         <div className="highlight fail">
-                          <strong>Errors:</strong> {prompt.metrics?.testErrorCount || 0}
+                          <strong>Errors:</strong> {metrics?.testErrorCount || 0}
                         </div>
                       </div>
                     ) : null}
-                    {prompt.metrics?.namedScores &&
-                    Object.keys(prompt.metrics.namedScores).length > 0 ? (
-                      <Box className="collapse-hidden">
+                    {!isRedteam &&
+                    metrics?.namedScores &&
+                    Object.keys(metrics.namedScores).length > 0 ? (
+                      <div className="collapse-hidden">
                         <CustomMetrics
-                          lookup={prompt.metrics.namedScores}
-                          counts={prompt.metrics.namedScoresCount}
+                          lookup={metrics.namedScores}
+                          counts={metrics.namedScoresCount}
                           metricTotals={metricTotals}
                           onShowMore={() => setCustomMetricsDialogOpen(true)}
                         />
-                      </Box>
+                      </div>
                     ) : null}
                     {/* TODO(ian): Remove backwards compatibility for prompt.provider added 12/26/23 */}
                   </div>
@@ -930,22 +1143,15 @@ function ResultsTable({
                   />
                   {details}
                   {filterMode === 'failures' && head.prompts.length > 1 && (
-                    <FormControlLabel
-                      sx={{
-                        '& .MuiFormControlLabel-label': {
-                          fontSize: '0.75rem',
-                        },
-                      }}
-                      control={
-                        <Checkbox
-                          checked={isChecked}
-                          onChange={(event) =>
-                            onFailureFilterToggle(columnId, event.target.checked)
-                          }
-                        />
-                      }
-                      label="Show failures"
-                    />
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={(checked) =>
+                          onFailureFilterToggle(columnId, checked === true)
+                        }
+                      />
+                      <span>Show failures</span>
+                    </label>
                   )}
                 </div>
               );
@@ -997,8 +1203,10 @@ function ResultsTable({
     failureFilter,
     filterMode,
     getFirstOutput,
+    getMetrics,
     getOutput,
     handleRating,
+    head,
     head.prompts,
     maxTextLength,
     metricTotals,
@@ -1041,6 +1249,7 @@ function ResultsTable({
   }, [descriptionColumn, variableColumns, promptColumns]);
 
   const pageCount = Math.ceil(filteredResultsCount / pagination.pageSize);
+
   const reactTable = useReactTable({
     data: tableBody,
     columns,
@@ -1050,8 +1259,10 @@ function ResultsTable({
     pageCount,
     state: {
       columnVisibility,
+      columnSizing,
       pagination,
     },
+    onColumnSizingChange: setColumnSizing,
     enableColumnResizing: true,
   });
 
@@ -1065,6 +1276,7 @@ function ResultsTable({
     }
   }, [navigate]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   useEffect(() => {
     const params = parseQueryParams(window.location.search);
     const rowId = params['rowId'];
@@ -1151,6 +1363,33 @@ function ResultsTable({
   const tableRef = useRef<HTMLDivElement>(null);
   const theadRef = useRef<HTMLTableSectionElement>(null);
 
+  // Detect if there's minimal scroll room - in this case, disable height collapse
+  // to prevent jitter feedback loop (height change affects scroll position)
+  const [hasMinimalScrollRoom, setHasMinimalScrollRoom] = React.useState(false);
+
+  const checkScrollRoom = React.useCallback(() => {
+    const scrollRoom = document.documentElement.scrollHeight - window.innerHeight;
+    setHasMinimalScrollRoom(scrollRoom < 150);
+  }, []);
+
+  useEffect(() => {
+    checkScrollRoom();
+    window.addEventListener('resize', checkScrollRoom);
+    // Re-check after initial render
+    const timeoutId = setTimeout(checkScrollRoom, 100);
+
+    return () => {
+      window.removeEventListener('resize', checkScrollRoom);
+      clearTimeout(timeoutId);
+    };
+  }, [checkScrollRoom]);
+
+  // Re-check scroll room when content changes (filtered results count affects page height)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: filteredResultsCount is intentionally used as a trigger to re-check scroll room when the number of rows changes
+  useEffect(() => {
+    checkScrollRoom();
+  }, [filteredResultsCount, checkScrollRoom]);
+
   useEffect(() => {
     if (!tableRef.current || !theadRef.current) {
       return;
@@ -1197,20 +1436,11 @@ function ResultsTable({
       {filteredResultsCount === 0 &&
         !isFetching &&
         (debouncedSearchText || filterMode !== 'all' || filters.appliedCount > 0) && (
-          <Box
-            sx={{
-              padding: '20px',
-              textAlign: 'center',
-              backgroundColor: 'rgba(0, 0, 0, 0.03)',
-              borderRadius: '4px',
-              marginTop: '20px',
-              marginBottom: '20px',
-            }}
-          >
-            <Typography variant="body1">No results found for the current filters.</Typography>
-          </Box>
+          <div className="p-5 text-center bg-black/[0.03] dark:bg-white/[0.03] rounded my-5">
+            <p>No results found for the current filters.</p>
+          </div>
         )}
-      <Box sx={{ height: '1rem' }} />
+      <div className="h-4" />
       <ResultsTableHeader
         reactTable={reactTable}
         tableWidth={tableWidth}
@@ -1219,6 +1449,7 @@ function ResultsTable({
         theadRef={theadRef}
         stickyHeader={stickyHeader}
         setStickyHeader={setStickyHeader}
+        hasMinimalScrollRoom={hasMinimalScrollRoom}
         zoom={zoom}
       />
       <div
@@ -1234,26 +1465,14 @@ function ResultsTable({
         }}
         ref={tableRef}
       >
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: (theme) => alpha(theme.palette.background.default, 0.7),
-            zIndex: 1000,
-            opacity: isFetching ? 1 : 0,
-            pointerEvents: isFetching ? 'auto' : 'none',
-            transition: 'opacity 0.3s ease-in-out',
-            backdropFilter: 'blur(2px)',
-          }}
+        <div
+          className={cn(
+            'absolute inset-0 flex items-center justify-center bg-background/70 z-20 transition-opacity duration-300 backdrop-blur-[2px]',
+            isFetching ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+          )}
         >
-          <CircularProgress size={60} />
-        </Box>
+          <Spinner className="size-[60px]" />
+        </div>
         <table
           className={`results-table firefox-fix ${maxTextLength <= 25 ? 'compact' : ''}`}
           style={{
@@ -1277,15 +1496,9 @@ function ResultsTable({
 
                     let cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
                     const value = cell.getValue();
-                    if (
-                      typeof value === 'string' &&
-                      (value.match(/^data:(image\/[a-z]+|application\/octet-stream);base64,/) ||
-                        value.match(/^[A-Za-z0-9+/]{20,}={0,2}$/))
-                    ) {
-                      const imgSrc = value.startsWith('data:')
-                        ? value
-                        : `data:image/jpeg;base64,${value}`;
-
+                    const imgSrc =
+                      typeof value === 'string' ? resolveImageSource(value) : undefined;
+                    if (imgSrc) {
                       // If this is a variable column for the inject var, try to show the original image text
                       let originalImageText: string | undefined;
                       const columnId = String(cell.column.id);
@@ -1295,12 +1508,13 @@ function ResultsTable({
                         const injectVarName = config?.redteam?.injectVar || 'prompt';
                         const varNameForCol = head.vars[varIdx];
                         if (varNameForCol === injectVarName) {
-                          const testMeta: any = (row.original as any)?.test?.metadata || {};
+                          const testMeta: Record<string, unknown> =
+                            row.original.test?.metadata || {};
                           const fromMeta =
                             typeof testMeta.originalText === 'string'
                               ? testMeta.originalText
                               : undefined;
-                          const testVars: any = (row.original as any)?.test?.vars || {};
+                          const testVars: Vars = row.original.test?.vars || {};
                           const fromVars =
                             typeof testVars.image_text === 'string'
                               ? (testVars.image_text as string)
@@ -1335,19 +1549,13 @@ function ResultsTable({
                             </div>
                           )}
                           {originalImageText ? (
-                            <Box
-                              sx={{
-                                marginTop: '6px',
-                                color: 'text.secondary',
-                                fontSize: '0.8em',
-                              }}
-                            >
+                            <div className="mt-1.5 text-muted-foreground text-[0.8em]">
                               <strong>Original (image text):</strong>{' '}
                               <TruncatedText
                                 text={String(originalImageText)}
                                 maxLength={maxTextLength}
                               />
-                            </Box>
+                            </div>
                           ) : null}
                         </>
                       );
@@ -1372,112 +1580,79 @@ function ResultsTable({
           </tbody>
         </table>
       </div>
-      <Box
-        className="pagination"
-        px={2}
-        mx={-2}
-        sx={{
-          position: 'sticky',
-          bottom: 0,
-          zIndex: 1000,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 2,
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          backgroundColor: 'background.paper',
-          borderTop: '1px solid',
-          borderColor: 'divider',
-          width: '100vw',
-          boxShadow: 3,
-        }}
-      >
-        <Box>
+      <div className="pagination sticky bottom-0 z-10 flex items-center gap-4 flex-wrap justify-between bg-background border-t border-border w-screen px-4 -mx-4 shadow-lg py-2">
+        <div>
           Showing{' '}
           {filteredResultsCount === 0 ? (
-            <Typography component="span" sx={{ fontWeight: 600 }}>
-              0
-            </Typography>
+            <span className="font-semibold">0</span>
           ) : (
             <>
-              <Typography component="span" sx={{ fontWeight: 600 }}>
+              <span className="font-semibold">
                 {pagination.pageIndex * pagination.pageSize + 1}
-              </Typography>{' '}
+              </span>{' '}
               to{' '}
-              <Typography component="span" sx={{ fontWeight: 600 }}>
+              <span className="font-semibold">
                 {Math.min((pagination.pageIndex + 1) * pagination.pageSize, filteredResultsCount)}
-              </Typography>{' '}
-              of{' '}
-              <Typography component="span" sx={{ fontWeight: 600 }}>
-                {filteredResultsCount}
-              </Typography>
+              </span>{' '}
+              of <span className="font-semibold">{filteredResultsCount}</span>
             </>
           )}{' '}
           results
-        </Box>
+        </div>
 
         {filteredResultsCount > 0 && (
-          <Box>
+          <div>
             Page{' '}
-            <Typography component="span" sx={{ fontWeight: 600 }}>
-              {reactTable.getState().pagination.pageIndex + 1}
-            </Typography>{' '}
-            of{' '}
-            <Typography component="span" sx={{ fontWeight: 600 }}>
-              {pageCount}
-            </Typography>
-          </Box>
+            <span className="font-semibold">{reactTable.getState().pagination.pageIndex + 1}</span>{' '}
+            of <span className="font-semibold">{pageCount}</span>
+          </div>
         )}
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <div className="flex items-center gap-2">
           {/* PAGE SIZE SELECTOR */}
-          <Typography component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <div className="flex items-center gap-2">
             <span>Results per page:</span>
             <Select
-              value={pagination.pageSize}
-              onChange={(e) => {
+              value={String(pagination.pageSize)}
+              onValueChange={(value) => {
                 setPagination((prev) => ({
                   ...prev,
-                  pageSize: Number(e.target.value),
+                  pageSize: Number(value),
                 }));
                 window.scrollTo(0, 0);
               }}
-              displayEmpty
-              inputProps={{ 'aria-label': 'Results per page' }}
-              size="small"
-              sx={{ m: 1, minWidth: 80 }}
               disabled={filteredResultsCount <= 10}
             >
-              <MenuItem value={10}>10</MenuItem>
-              <MenuItem value={50} disabled={filteredResultsCount <= 10}>
-                50
-              </MenuItem>
-              <MenuItem value={100} disabled={filteredResultsCount <= 50}>
-                100
-              </MenuItem>
-              <MenuItem value={500} disabled={filteredResultsCount <= 100}>
-                500
-              </MenuItem>
-              <MenuItem value={1000} disabled={filteredResultsCount <= 500}>
-                1000
-              </MenuItem>
+              <SelectTrigger className="w-20 h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="50" disabled={filteredResultsCount <= 10}>
+                  50
+                </SelectItem>
+                <SelectItem value="100" disabled={filteredResultsCount <= 50}>
+                  100
+                </SelectItem>
+                <SelectItem value="500" disabled={filteredResultsCount <= 100}>
+                  500
+                </SelectItem>
+                <SelectItem value="1000" disabled={filteredResultsCount <= 500}>
+                  1000
+                </SelectItem>
+              </SelectContent>
             </Select>
-          </Typography>
+          </div>
 
           {/* PAGE NAVIGATOR */}
-          <Typography
-            component="span"
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-              opacity: pageCount > 1 ? 1 : 0.5,
-              pointerEvents: pageCount > 1 ? 'auto' : 'none',
-            }}
+          <div
+            className={cn(
+              'flex items-center gap-2',
+              pageCount <= 1 && 'opacity-50 pointer-events-none',
+            )}
           >
             <span>Go to:</span>
-            <BaseNumberInput
-              size="small"
+            <NumberInput
               value={pagination.pageIndex + 1}
               onChange={(v) => {
                 const page = v !== undefined ? v - 1 : null;
@@ -1489,19 +1664,19 @@ function ResultsTable({
                   clearRowIdFromUrl();
                 }
               }}
-              sx={{
-                width: '60px',
-                textAlign: 'center',
-              }}
+              className="w-[60px] h-8 text-center"
               min={1}
               max={pageCount || 1}
               disabled={pageCount === 1}
             />
-          </Typography>
+          </div>
 
           {/* PAGE NAVIGATION BUTTONS */}
-          <ButtonGroup>
-            <IconButton
+          <div className="flex">
+            <Button
+              variant="outline"
+              size="icon"
+              className="rounded-r-none"
               onClick={() => {
                 setPagination((prev) => ({
                   ...prev,
@@ -1512,9 +1687,12 @@ function ResultsTable({
               }}
               disabled={reactTable.getState().pagination.pageIndex === 0}
             >
-              <ArrowBackIcon />
-            </IconButton>
-            <IconButton
+              <ArrowLeft className="size-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="rounded-l-none -ml-px"
               onClick={() => {
                 setPagination((prev) => ({
                   ...prev,
@@ -1525,11 +1703,11 @@ function ResultsTable({
               }}
               disabled={reactTable.getState().pagination.pageIndex + 1 >= pageCount}
             >
-              <ArrowForwardIcon />
-            </IconButton>
-          </ButtonGroup>
-        </Box>
-      </Box>
+              <ArrowRight className="size-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
       <CustomMetricsDialog
         open={customMetricsDialogOpen}
         onClose={() => setCustomMetricsDialogOpen(false)}
