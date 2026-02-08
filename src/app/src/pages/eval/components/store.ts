@@ -193,7 +193,13 @@ function computeAvailableSeverities(
   });
 
   // Return sorted array of severity values (in order of criticality)
-  const severityOrder = [Severity.Critical, Severity.High, Severity.Medium, Severity.Low];
+  const severityOrder = [
+    Severity.Critical,
+    Severity.High,
+    Severity.Medium,
+    Severity.Low,
+    Severity.Informational,
+  ];
   return severityOrder.filter((sev) => severities.has(sev));
 }
 
@@ -667,9 +673,7 @@ export const useTableStore = create<TableState>()(
 
         const resp = await callApi(
           // Remove the origin as it was only added to satisfy the URL constructor.
-          url
-            .toString()
-            .replace(window.location.origin, ''),
+          url.toString().replace(window.location.origin, ''),
         );
 
         if (resp.ok) {
