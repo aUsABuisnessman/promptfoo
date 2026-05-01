@@ -9,6 +9,7 @@ import {
   XAIVideoProvider,
 } from '../../../src/providers/xai/video';
 import * as fetch from '../../../src/util/fetch';
+import { sleep } from '../../../src/util/time';
 
 vi.mock('../../../src/logger');
 vi.mock('../../../src/util/fetch');
@@ -41,6 +42,7 @@ describe('XAI Video Provider', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.clearAllMocks();
+    vi.mocked(sleep).mockResolvedValue(undefined);
 
     // Mock environment
     vi.stubEnv('XAI_API_KEY', mockApiKey);
@@ -52,7 +54,7 @@ describe('XAI Video Provider', () => {
     vi.mocked(videoUtils.formatVideoOutput).mockReturnValue(
       `[Video: ${mockPrompt}](storageRef:${mockStorageKey})`,
     );
-    vi.mocked(videoUtils.storeCacheMapping).mockReturnValue(undefined);
+    vi.mocked(videoUtils.storeCacheMapping).mockResolvedValue(undefined);
     vi.mocked(videoUtils.storeVideoContent).mockResolvedValue({
       storageRef: {
         provider: 'filesystem',
@@ -300,28 +302,41 @@ describe('XAI Video Provider', () => {
     });
 
     it('handles polling timeout', async () => {
-      // Mock job creation
-      const createResponse = {
-        ok: true,
-        json: vi.fn().mockResolvedValue({ request_id: mockRequestId }),
-      };
+      vi.useFakeTimers();
+      try {
+        // Route the mocked sleep through the real implementation so fake
+        // timers can advance the polling loop deterministically.
+        const realTime =
+          await vi.importActual<typeof import('../../../src/util/time')>('../../../src/util/time');
+        vi.mocked(sleep).mockImplementation(realTime.sleep);
 
-      // Mock pending status that never completes
-      const pendingResponse = {
-        ok: true,
-        json: vi.fn().mockResolvedValue({ status: 'pending' }),
-      };
+        // Mock job creation
+        const createResponse = {
+          ok: true,
+          json: vi.fn().mockResolvedValue({ request_id: mockRequestId }),
+        };
 
-      vi.mocked(fetch.fetchWithProxy)
-        .mockResolvedValueOnce(createResponse as any)
-        .mockResolvedValue(pendingResponse as any);
+        // Mock pending status that never completes
+        const pendingResponse = {
+          ok: true,
+          json: vi.fn().mockResolvedValue({ status: 'pending' }),
+        };
 
-      const provider = new XAIVideoProvider('grok-imagine-video', {
-        config: { max_poll_time_ms: 100, poll_interval_ms: 10 },
-      });
-      const result = await provider.callApi(mockPrompt);
+        vi.mocked(fetch.fetchWithProxy)
+          .mockResolvedValueOnce(createResponse as any)
+          .mockResolvedValue(pendingResponse as any);
 
-      expect(result.error).toContain('timed out');
+        const provider = new XAIVideoProvider('grok-imagine-video', {
+          config: { max_poll_time_ms: 100, poll_interval_ms: 10 },
+        });
+        const resultPromise = provider.callApi(mockPrompt);
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.error).toContain('timed out');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('handles failed video generation', async () => {

@@ -1,4 +1,4 @@
-import * as fs from 'fs';
+import fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -8,6 +8,7 @@ import { doEval } from '../commands/eval';
 import logger, { setLogCallback, setLogLevel } from '../logger';
 import { checkRemoteHealth } from '../util/apiHealth';
 import { loadDefaultConfig } from '../util/config/default';
+import { pathExists } from '../util/file';
 import { formatDuration } from '../util/formatDuration';
 import { promptfooCommand } from '../util/promptfooCommand';
 import { initVerboseToggle } from '../util/verboseToggle';
@@ -66,8 +67,8 @@ export async function doRedteamRun(options: RedteamRunOptions): Promise<Eval | u
     const filename = `redteam-${Date.now()}.yaml`;
     const tmpDir = options.loadedFromCloud ? '' : os.tmpdir();
     const tmpFile = path.join(tmpDir, filename);
-    fs.mkdirSync(path.dirname(tmpFile), { recursive: true });
-    fs.writeFileSync(tmpFile, yaml.dump(options.liveRedteamConfig));
+    await fs.mkdir(path.dirname(tmpFile), { recursive: true });
+    await fs.writeFile(tmpFile, yaml.dump(options.liveRedteamConfig));
     redteamPath = tmpFile;
     // Do not use default config.
     configPath = tmpFile;
@@ -85,7 +86,7 @@ export async function doRedteamRun(options: RedteamRunOptions): Promise<Eval | u
     redteamConfig = await doGenerateRedteam({
       ...passThroughOptions,
       ...(options.liveRedteamConfig?.commandLineOptions || {}),
-      ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
+      ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
       config: configPath,
       output: redteamPath,
       force: options.force,
@@ -113,7 +114,7 @@ export async function doRedteamRun(options: RedteamRunOptions): Promise<Eval | u
   const generationDurationMs = Date.now() - generationStartTime;
 
   // Check if redteam.yaml exists before running evaluation
-  if (!redteamConfig || !fs.existsSync(redteamPath)) {
+  if (!redteamConfig || !(await pathExists(redteamPath))) {
     logger.info('No test cases generated. Skipping scan.');
     if (verboseToggleCleanup) {
       verboseToggleCleanup();
@@ -162,7 +163,15 @@ export async function doRedteamRun(options: RedteamRunOptions): Promise<Eval | u
     );
   }
 
-  logger.info(chalk.green('\nRed team scan complete!'));
+  // Show appropriate completion message based on abort status
+  // Note: Detailed abort information is already shown in the summary, so we just show a brief message here
+  // Check if scan was aborted due to target error (efficient DB query, not loading all results)
+  const hasTargetError = evalResult ? (await evalResult.findTargetErrorStatus()) != null : false;
+  if (hasTargetError) {
+    // Abort details already shown in summary - no need to repeat
+  } else {
+    logger.info(chalk.green('\nRed team scan complete!'));
+  }
   if (!evalResult?.shared) {
     if (options.liveRedteamConfig) {
       logger.info(

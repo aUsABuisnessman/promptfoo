@@ -1,7 +1,7 @@
 import { fetchWithCache } from '../cache';
 import { getEnvString } from '../envars';
 import logger from '../logger';
-import { calculateCost, parseChatPrompt, REQUEST_TIMEOUT_MS } from './shared';
+import { calculateCost, getRequestTimeoutMs, parseChatPrompt } from './shared';
 
 import type { EnvVarKey } from '../envars';
 import type { EnvOverrides } from '../types/env';
@@ -38,6 +38,8 @@ interface AI21ChatCompletionOptions {
   max_tokens?: number;
   response_format?: { type: 'json_object' | 'text' };
   cost?: number;
+  inputCost?: number;
+  outputCost?: number;
 }
 
 function getTokenUsage(data: any, cached: boolean): Partial<TokenUsage> {
@@ -107,6 +109,10 @@ export class AI21ChatCompletionProvider implements ApiProvider {
     );
   }
 
+  requiresApiKey(): boolean {
+    return true;
+  }
+
   getApiKey(): string | undefined {
     logger.debug(`AI21 apiKeyenvar: ${this.config.apiKeyEnvar}`);
     return (
@@ -139,8 +145,8 @@ export class AI21ChatCompletionProvider implements ApiProvider {
       model: this.modelName,
       messages,
       temperature: config?.temperature ?? 0.1,
-      top_p: config?.top_p || 1,
-      max_tokens: config?.max_tokens || 1024,
+      top_p: config?.top_p ?? 1,
+      max_tokens: config?.max_tokens ?? 1024,
       n: 1,
       stop: [],
       response_format: config.response_format || { type: 'text' },
@@ -162,7 +168,7 @@ export class AI21ChatCompletionProvider implements ApiProvider {
           },
           body: JSON.stringify(body),
         },
-        REQUEST_TIMEOUT_MS,
+        getRequestTimeoutMs(),
       )) as unknown as { data: any; cached: boolean });
     } catch (err) {
       return {

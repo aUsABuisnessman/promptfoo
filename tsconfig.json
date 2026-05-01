@@ -13,8 +13,8 @@
     "resolveJsonModule": true,
     "composite": true,
     "rootDir": ".",
-    "baseUrl": "./",
-    "jsx": "react-jsx"
+    "ignoreDeprecations": "6.0",
+    "baseUrl": "./"
   },
   "include": [
     "src/",

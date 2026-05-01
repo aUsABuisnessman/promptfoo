@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import process from 'process';
@@ -53,6 +52,20 @@ import { DEFAULT_CONFIG_EXTENSIONS } from './extensions';
  */
 function isTestCaseWithVars(test: unknown): test is { vars: Record<string, unknown> } {
   return typeof test === 'object' && test !== null && 'vars' in test;
+}
+
+function firstTargetHasInputs(providers: UnifiedConfig['providers'] | undefined): boolean {
+  if (!Array.isArray(providers)) {
+    return false;
+  }
+
+  const firstProvider = providers[0];
+  if (typeof firstProvider !== 'object' || firstProvider === null || !('inputs' in firstProvider)) {
+    return false;
+  }
+
+  const inputs = firstProvider.inputs;
+  return typeof inputs === 'object' && inputs !== null && Object.keys(inputs).length > 0;
 }
 
 /**
@@ -339,8 +352,9 @@ export async function readConfig(configPath: string): Promise<UnifiedConfig> {
         ret.tests.some(
           (test) => isTestCaseWithVars(test) && Object.keys(test.vars || {}).includes('prompt'),
         ));
+    const usesMultiInputTargets = firstTargetHasInputs(ret.providers);
 
-    if (!hasAnyPrompt) {
+    if (!hasAnyPrompt && !usesMultiInputTargets) {
       logger.warn(
         `Warning: Expected top-level "prompts" property in config or a test variable named "prompt"`,
       );
@@ -634,7 +648,7 @@ export async function resolveConfigs(
       process.exit(1);
     }
     const modelOutputs = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), cmdObj.modelOutputs), 'utf8'),
+      await fsPromises.readFile(path.join(process.cwd(), cmdObj.modelOutputs), 'utf8'),
     ) as string[] | { output: string; tags?: string[] }[];
     const assertions = await readAssertions(cmdObj.assertions);
     fileConfig.prompts = ['{{output}}'];
@@ -880,6 +894,7 @@ export async function resolveConfigs(
       fileConfig.nunjucksFilters || defaultConfig.nunjucksFilters || {},
       basePath,
     ),
+    redteam: config.redteam,
     extensions: config.extensions,
     tracing: config.tracing,
   };

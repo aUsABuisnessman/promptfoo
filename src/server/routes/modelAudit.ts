@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import fs from 'fs';
+import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
@@ -18,6 +18,69 @@ import type { ModelAuditScanResults } from '../../types/modelAudit';
 
 export const modelAuditRouter = Router();
 
+const LIST_SCANNERS_ARGS = parseModelAuditArgs([], {
+  listScanners: true,
+  format: 'json',
+}).args;
+
+function getModelAuditDelegationEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PROMPTFOO_DELEGATED: 'true',
+  };
+}
+
+interface SpawnCaptureOptions {
+  /** Abort signal to terminate the child process (e.g. on client disconnect). */
+  signal?: AbortSignal;
+}
+
+function spawnModelAuditCapture(
+  args: string[],
+  options: SpawnCaptureOptions = {},
+): Promise<{
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('modelaudit', args, {
+      env: getModelAuditDelegationEnv(),
+    });
+    let stdout = '';
+    let stderr = '';
+
+    const onAbort = () => {
+      if (!child.killed) {
+        child.kill('SIGTERM');
+      }
+    };
+    if (options.signal?.aborted) {
+      onAbort();
+    } else {
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+    }
+    const cleanupAbort = () => options.signal?.removeEventListener('abort', onAbort);
+
+    child.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (error) => {
+      cleanupAbort();
+      reject(error);
+    });
+    child.on('close', (code) => {
+      cleanupAbort();
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
 // Check if modelaudit is installed
 modelAuditRouter.get('/check-installed', async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -33,6 +96,45 @@ modelAuditRouter.get('/check-installed', async (_req: Request, res: Response): P
         cwd: process.cwd(),
       }),
     );
+  }
+});
+
+modelAuditRouter.get('/scanners', async (req: Request, res: Response): Promise<void> => {
+  const abortController = new AbortController();
+  const onClientClose = () => abortController.abort();
+  req.on('close', onClientClose);
+
+  try {
+    const { installed } = await checkModelAuditInstalled();
+    if (!installed) {
+      res.status(400).json({
+        error: 'ModelAudit is not installed. Please install it using: pip install modelaudit',
+      });
+      return;
+    }
+
+    const { code, stdout, stderr } = await spawnModelAuditCapture(LIST_SCANNERS_ARGS, {
+      signal: abortController.signal,
+    });
+
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    if (code !== null && code !== 0) {
+      sendError(res, 500, 'Failed to list ModelAudit scanners', { code, stderr });
+      return;
+    }
+
+    const parsedOutput = JSON.parse(stdout);
+    res.json(ModelAuditSchemas.ListScanners.Response.parse(parsedOutput));
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+    sendError(res, 500, 'Failed to list ModelAudit scanners', error);
+  } finally {
+    req.removeListener('close', onClientClose);
   }
 });
 
@@ -57,14 +159,16 @@ modelAuditRouter.post('/check-path', async (req: Request, res: Response): Promis
       ? expandedPath
       : path.resolve(process.cwd(), expandedPath);
 
-    // Check if path exists
-    if (!fs.existsSync(absolutePath)) {
+    // Treat any access failure (ENOENT, EACCES, EPERM, ELOOP, ...) as not-exists,
+    // matching the historical fs.existsSync behavior the UI depends on.
+    let stats;
+    try {
+      stats = await fs.stat(absolutePath);
+    } catch {
       res.json(ModelAuditSchemas.CheckPath.Response.parse({ exists: false, type: null }));
       return;
     }
 
-    // Get path stats
-    const stats = fs.statSync(absolutePath);
     const type = stats.isDirectory() ? 'directory' : 'file';
 
     res.json(
@@ -118,11 +222,15 @@ modelAuditRouter.post('/scan', async (req: Request, res: Response): Promise<void
         ? expandedPath
         : path.resolve(process.cwd(), expandedPath);
 
-      // Check if path exists
-      if (!fs.existsSync(absolutePath)) {
-        res
-          .status(400)
-          .json({ error: `Path does not exist: ${inputPath} (resolved to: ${absolutePath})` });
+      try {
+        await fs.access(absolutePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const message =
+          code === 'ENOENT'
+            ? `Path does not exist: ${inputPath} (resolved to: ${absolutePath})`
+            : `Cannot access path: ${inputPath} (resolved to: ${absolutePath}, ${code ?? 'unknown error'})`;
+        res.status(400).json({ error: message });
         return;
       }
 
@@ -156,24 +264,55 @@ modelAuditRouter.post('/scan', async (req: Request, res: Response): Promise<void
       event: 'model_scan',
       pathCount: paths.length,
       hasBlacklist: (options.blacklist?.length ?? 0) > 0,
+      hasScannerSelection: Boolean(options.scanners?.length || options.excludeScanner?.length),
       timeout: options.timeout ?? 0,
       verbose: options.verbose ?? false,
       persist,
     });
 
     // Run the scan
-    const modelAudit = spawn('modelaudit', args);
+    const modelAudit = spawn('modelaudit', args, { env: getModelAuditDelegationEnv() });
     let stdout = '';
     let stderr = '';
     let responded = false; // Prevent double-response
 
-    // Helper to safely send response (prevents double-response if both error and close fire)
+    // Helper to safely send response (prevents double-response if both error and close fire).
+    //
+    // Mark `responded = true` BEFORE running the schema parse: this runs inside
+    // child-process event callbacks where a thrown ZodError would propagate as
+    // an unhandled exception and leave `responded = false`, allowing a second
+    // emitter (e.g. `close` after `error`) to fire and double-send. If the
+    // parse fails, fall back to a hand-built error envelope so the client
+    // still receives a valid response.
     const safeRespond = (statusCode: number, body: object) => {
       if (responded) {
         return;
       }
       responded = true;
-      res.status(statusCode).json(body);
+      const isSuccess = statusCode >= 200 && statusCode < 300;
+      try {
+        const parsed = isSuccess
+          ? ModelAuditSchemas.Scan.Response.parse(body)
+          : ModelAuditSchemas.Scan.ErrorResponse.parse(body);
+        res.status(statusCode).json(parsed);
+      } catch (parseError) {
+        // Match the existing logging style in this file (e.g.
+        // `logger.error('Failed to parse model scan output', { parseError, ... })`)
+        // by passing the raw error value so the logger sanitizer can preserve
+        // the stack and other diagnostic context.
+        logger.error('safeRespond DTO parse failed; sending fallback envelope', {
+          parseError,
+          statusCode,
+        });
+        // A parse failure on either branch means the response cannot be trusted.
+        // Always degrade to 500 with a deterministic envelope so clients see a
+        // clear failure instead of an empty body or a stack trace from Express.
+        const fallbackError =
+          !isSuccess && 'error' in body && typeof body.error === 'string'
+            ? body.error
+            : 'Error processing scan results';
+        res.status(500).json({ error: fallbackError });
+      }
     };
 
     // Clean up child process if client disconnects
@@ -392,9 +531,20 @@ modelAuditRouter.post('/scan', async (req: Request, res: Response): Promise<void
                 options: {
                   blacklist: options.blacklist,
                   timeout: options.timeout,
+                  maxSize: options.maxSize,
                   maxFileSize: options.maxFileSize,
                   maxTotalSize: options.maxTotalSize,
                   verbose: options.verbose,
+                  format: options.format,
+                  strict: options.strict,
+                  dryRun: options.dryRun,
+                  cache: options.cache,
+                  quiet: options.quiet,
+                  progress: options.progress,
+                  sbom: options.sbom,
+                  output: options.output,
+                  scanners: options.scanners,
+                  excludeScanner: options.excludeScanner,
                 },
               },
             });
